@@ -1,0 +1,28 @@
+# Dependencies
+**/node_modules/
+
+# Production builds
+**/dist/
+**/build/
+*.zip
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE & OS files
+.idea/
+.vscode/
+*.swp
+*.DS_Store
+Thumbs.db
+
+# Android
+**/android/.gradle/
+**/android/app/build/
+**/android/local.properties
+**/android/.navigation/
+
+# Logs
+*.log
