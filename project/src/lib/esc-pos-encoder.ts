@@ -144,15 +144,61 @@ export function generateEscPosReceipt(order: Order, settings: Settings, logoByte
   writeStr(separator);
 
   // 5. Totals & Payment Summary
-  bytes.push(0x1b, 0x61, 0x02); // Align Right
+  const writeRow = (left: string, right: string) => {
+    const maxLen = 32;
+    const rightLen = right.length;
+    const leftMax = Math.max(0, maxLen - rightLen - 1);
+    const trimmedLeft = left.length > leftMax ? left.substring(0, leftMax) : left;
+    const padding = Math.max(1, maxLen - trimmedLeft.length - rightLen);
+    writeStr(trimmedLeft + " ".repeat(padding) + right + "\n");
+  };
+
+  const itemsSubtotal = order.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
+  const subtotalVal = Math.max(order.subtotal || 0, itemsSubtotal);
+
+  bytes.push(0x1b, 0x61, 0x00); // Align Left for 2-column rows
+  writeRow("Subtotal:", `P${subtotalVal.toFixed(2)}`);
+
+  const promoAmt = order.promoDiscountAmount || 0;
+  if (order.promoName || promoAmt > 0) {
+    const label = order.promoName ? `Promo (${order.promoName}):` : "Promo Discount:";
+    writeRow(label, `-P${promoAmt.toFixed(2)}`);
+  }
+
+  const isExemptType = order.discount?.type === "Senior" || order.discount?.type === "PWD";
+  const calcExemptDiscount = Math.max(0, subtotalVal - order.total - promoAmt);
+  const discountAmt = (order.discountAmount && order.discountAmount > 0) ? order.discountAmount : calcExemptDiscount;
+
+  const isDiscountApplied = isExemptType || discountAmt > 0.01;
+  const discountLabelType = isExemptType ? order.discount.type : "Senior/PWD";
+  const discountRate = order.discountRate || (order.discount?.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate) || 20;
+
+  if (isDiscountApplied && discountAmt > 0.01) {
+    writeRow(`${discountLabelType} Disc (${discountRate}%):`, `-P${discountAmt.toFixed(2)}`);
+  }
+
   bytes.push(0x1b, 0x45, 0x01); // Bold ON
-  writeStr(`TOTAL: P${order.total.toFixed(2)}\n`);
+  writeRow("TOTAL:", `P${order.total.toFixed(2)}`);
   bytes.push(0x1b, 0x45, 0x00); // Bold OFF
-  writeStr(`Cash: P${(order.cashGiven ?? order.total).toFixed(2)}\n`);
+  writeRow("Cash:", `P${(order.cashGiven ?? order.total).toFixed(2)}`);
   const change = order.cashGiven ? Math.max(0, order.cashGiven - order.total) : 0;
-  writeStr(`Change: P${change.toFixed(2)}\n`);
+  writeRow("Change:", `P${change.toFixed(2)}`);
 
   writeStr(separator);
+
+  // Customer & Discount Metadata if present
+  const hasPromo = !!order.promoName || promoAmt > 0;
+  if (order.customerName || isDiscountApplied || hasPromo) {
+    bytes.push(0x1b, 0x61, 0x00); // Align Left
+    if (order.customerName) writeStr(`Customer: ${order.customerName}\n`);
+    if (order.promoName) writeStr(`Applied Promo: ${order.promoName}\n`);
+    if (isDiscountApplied) {
+      writeStr(`Discount: ${discountLabelType} (${discountRate}%)\n`);
+      if (order.discount?.idNumber) writeStr(`${discountLabelType} ID: ${order.discount.idNumber}\n`);
+      if (order.discount?.beneficiary) writeStr(`Beneficiary: ${order.discount.beneficiary}\n`);
+    }
+    writeStr(separator);
+  }
 
   // 6. Footer
   bytes.push(0x1b, 0x61, 0x01); // Center

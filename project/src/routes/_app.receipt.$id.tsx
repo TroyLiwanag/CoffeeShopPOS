@@ -36,8 +36,16 @@ function ReceiptScreen() {
 
   const canPrint = true; // All users (staff, cashier, admin) can use thermal print
   const orNo = formatOrderNumber(order.number, order.createdAt);
-  const isExempt = order.discount.type === "Senior" || order.discount.type === "PWD";
-  const discountRate = order.discountRate ?? (order.discount.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate);
+  const itemsSubtotal = order.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
+  const subtotalVal = Math.max(order.subtotal || 0, itemsSubtotal);
+  const promoAmt = order.promoDiscountAmount || 0;
+  const isExemptType = order.discount?.type === "Senior" || order.discount?.type === "PWD";
+  const calcExemptDiscount = Math.max(0, subtotalVal - order.total - promoAmt);
+  const discountAmt = (order.discountAmount && order.discountAmount > 0) ? order.discountAmount : calcExemptDiscount;
+  const isDiscountApplied = isExemptType || discountAmt > 0.01;
+  const discountLabelType = isExemptType ? order.discount.type : "Senior/PWD";
+  const discountRate = order.discountRate || (order.discount?.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate) || 20;
+
   const formattedDate = new Date(order.createdAt).toLocaleString([], {
     month: "numeric",
     day: "numeric",
@@ -190,19 +198,23 @@ function ReceiptScreen() {
 
         {/* Totals & Payment */}
         <div className="border-t border-dashed border-gray-300 pt-3 space-y-1.5 text-sm">
-          {order.promoName && (
-            <div className="flex justify-between text-xs text-accent">
-              <span>Promo ({order.promoName})</span>
-              <span>-{fmt(order.promoDiscountAmount || 0)}</span>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>Subtotal</span>
+            <span>₱{subtotalVal.toFixed(2)}</span>
+          </div>
+          {(order.promoName || promoAmt > 0) && (
+            <div className="flex justify-between text-xs text-accent font-medium">
+              <span>Promo ({order.promoName || "Store Promo"})</span>
+              <span>-{fmt(promoAmt)}</span>
             </div>
           )}
-          {isExempt && (
-            <div className="flex justify-between text-xs text-amber-700 dark:text-amber-400">
-              <span>{order.discount.type} Discount ({discountRate}%)</span>
-              <span>-{fmt(order.discountAmount)}</span>
+          {isDiscountApplied && discountAmt > 0.01 && (
+            <div className="flex justify-between text-xs text-amber-700 dark:text-amber-400 font-medium">
+              <span>{discountLabelType} Discount ({discountRate}%)</span>
+              <span>-{fmt(discountAmt)}</span>
             </div>
           )}
-          <div className="flex justify-between items-center text-base font-bold pt-1">
+          <div className="flex justify-between items-center text-base font-bold pt-1 border-t border-gray-100">
             <span>Total</span>
             <span className="text-lg">₱{order.total.toFixed(2)}</span>
           </div>
@@ -217,11 +229,21 @@ function ReceiptScreen() {
         </div>
 
         {/* Customer & Discount Metadata if present */}
-        {(order.customerName || isExempt) && (
-          <div className="border-t border-dashed border-gray-300 pt-2 text-xs text-muted-foreground space-y-0.5">
-            {order.customerName && <div>Customer: {order.customerName}</div>}
-            {isExempt && order.discount.idNumber && <div>{order.discount.type} ID: {order.discount.idNumber}</div>}
-            {isExempt && order.discount.beneficiary && <div>Beneficiary: {order.discount.beneficiary}</div>}
+        {(order.customerName || isDiscountApplied || order.promoName) && (
+          <div className="border-t border-dashed border-gray-300 pt-2 text-xs text-muted-foreground space-y-1">
+            {order.customerName && <div><span className="font-semibold text-foreground">Customer:</span> {order.customerName}</div>}
+            {(order.promoName || promoAmt > 0) && (
+              <div>
+                <span className="font-semibold text-foreground">Applied Promotion:</span> {order.promoName || "Store Promo"} (-{fmt(promoAmt)})
+              </div>
+            )}
+            {isDiscountApplied && (
+              <div>
+                <span className="font-semibold text-foreground">Applied Discount:</span> {discountLabelType} ({discountRate}%)
+              </div>
+            )}
+            {isExemptType && order.discount?.idNumber && <div><span className="font-semibold text-foreground">{order.discount.type} ID:</span> {order.discount.idNumber}</div>}
+            {isExemptType && order.discount?.beneficiary && <div><span className="font-semibold text-foreground">Beneficiary:</span> {order.discount.beneficiary}</div>}
           </div>
         )}
 

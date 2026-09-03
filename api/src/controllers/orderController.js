@@ -1,7 +1,36 @@
 import pool from "../config/db.js";
 import { logAuditFromReq } from "../utils/auditLogger.js";
 
+let columnsChecked = false;
+async function ensureDiscountColumns() {
+  if (columnsChecked) return;
+  try {
+    const [existing] = await pool.query("SHOW COLUMNS FROM orders");
+    const existingNames = new Set(existing.map((c) => c.Field));
+
+    if (!existingNames.has("discount_type")) {
+      await pool.query("ALTER TABLE orders ADD COLUMN discount_type VARCHAR(50) DEFAULT 'None'");
+    }
+    if (!existingNames.has("discount_amount")) {
+      await pool.query("ALTER TABLE orders ADD COLUMN discount_amount DECIMAL(10,2) DEFAULT 0.00");
+    }
+    if (!existingNames.has("discount_rate")) {
+      await pool.query("ALTER TABLE orders ADD COLUMN discount_rate DECIMAL(5,2) DEFAULT 0.00");
+    }
+    if (!existingNames.has("discount_id_number")) {
+      await pool.query("ALTER TABLE orders ADD COLUMN discount_id_number VARCHAR(100) DEFAULT NULL");
+    }
+    if (!existingNames.has("beneficiary_name")) {
+      await pool.query("ALTER TABLE orders ADD COLUMN beneficiary_name VARCHAR(255) DEFAULT NULL");
+    }
+    columnsChecked = true;
+  } catch (err) {
+    console.error("Error auto-migrating discount columns on orders table:", err);
+  }
+}
+
 export async function list(req, res) {
+  await ensureDiscountColumns();
   const [orders] = await pool.query(
     `SELECT o.*, u.fullname AS created_by_name
      FROM orders o
@@ -23,6 +52,7 @@ export async function list(req, res) {
 }
 
 export async function create(req, res) {
+  await ensureDiscountColumns();
   const {
     customerName,
     totalAmount,
@@ -32,14 +62,23 @@ export async function create(req, res) {
     promoId,
     promoName,
     promoDiscountAmount,
+    discountType,
+    discountAmount,
+    discountRate,
+    discountIdNumber,
+    beneficiaryName,
   } = req.body;
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     const status = orderStatus || "completed";
     const [result] = await conn.query(
-      `INSERT INTO orders (customer_name, total_amount, payment_method, order_status, promo_id, promo_name, promo_discount_amount, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO orders (
+        customer_name, total_amount, payment_method, order_status,
+        promo_id, promo_name, promo_discount_amount,
+        discount_type, discount_amount, discount_rate, discount_id_number, beneficiary_name,
+        created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         customerName || null,
         totalAmount,
@@ -48,6 +87,11 @@ export async function create(req, res) {
         promoId || null,
         promoName || null,
         promoDiscountAmount || 0,
+        discountType || "None",
+        discountAmount || 0,
+        discountRate || 0,
+        discountIdNumber || null,
+        beneficiaryName || null,
         req.user.id,
       ],
     );

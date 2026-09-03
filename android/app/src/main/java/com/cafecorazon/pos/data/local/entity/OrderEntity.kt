@@ -43,6 +43,21 @@ data class OrderEntity(
     @ColumnInfo(name = "promo_discount_amount")
     val promoDiscountAmount: Double = 0.0,
 
+    @ColumnInfo(name = "discount_type")
+    val discountType: String = "None",
+
+    @ColumnInfo(name = "discount_amount")
+    val discountAmount: Double = 0.0,
+
+    @ColumnInfo(name = "discount_rate")
+    val discountRate: Double = 0.0,
+
+    @ColumnInfo(name = "discount_id_number")
+    val discountIdNumber: String? = null,
+
+    @ColumnInfo(name = "beneficiary_name")
+    val beneficiaryName: String? = null,
+
     @ColumnInfo(name = "created_by")
     val createdBy: Long? = null,
 

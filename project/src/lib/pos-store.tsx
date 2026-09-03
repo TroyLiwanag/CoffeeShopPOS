@@ -544,12 +544,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
             unitPrice: Number(item.price) || 0,
           }));
           const subtotal = items.reduce((s, i) => s + i.unitPrice * i.qty, total);
+          const discType = (o.discount_type === "Senior" || o.discount_type === "PWD") ? o.discount_type : "None";
+          const discAmt = Number(o.discount_amount) || 0;
+          const discRate = Number(o.discount_rate) || 0;
           return {
             id: String(o.id),
             number: Number(o.id),
             items,
             subtotal,
-            discountAmount: 0,
+            discountAmount: discAmt,
             promoId: o.promo_id ? Number(o.promo_id) : undefined,
             promoName: o.promo_name || undefined,
             promoDiscountAmount: Number(o.promo_discount_amount) || 0,
@@ -562,8 +565,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
             cashier: o.created_by_name || "Staff",
             createdAt: o.created_at,
             customerName: o.customer_name || undefined,
-            discount: { type: "None" as const },
-            discountRate: 0,
+            discount: {
+              type: discType,
+              idNumber: o.discount_id_number || undefined,
+              beneficiary: o.beneficiary_name || undefined,
+            },
+            discountRate: discRate,
           };
         });
         setOrders(mapped);
@@ -734,6 +741,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         promoId: appliedPromo?.id,
         promoName: appliedPromo?.promo_name,
         promoDiscountAmount,
+        discountType: discount.type,
+        discountAmount,
+        discountRate: exemptDiscountRate,
+        discountIdNumber: discount.idNumber,
+        beneficiaryName: discount.beneficiary,
         items: cart.map((i) => ({
           menuItemId: Number(i.product.id) || undefined,
           productId: Number(i.product.id) || 1,

@@ -34,6 +34,11 @@ class OrderRepository(
         promoId: Long?,
         promoName: String?,
         promoDiscountAmount: Double,
+        discountType: String = "None",
+        discountAmount: Double = 0.0,
+        discountRate: Double = 0.0,
+        discountIdNumber: String? = null,
+        beneficiaryName: String? = null,
         actorUserId: Long?,
         actorUserName: String?
     ): Result<Long> {
@@ -50,6 +55,11 @@ class OrderRepository(
             promoId = promoId,
             promoName = promoName,
             promoDiscountAmount = promoDiscountAmount,
+            discountType = discountType,
+            discountAmount = discountAmount,
+            discountRate = discountRate,
+            discountIdNumber = discountIdNumber?.takeIf { it.isNotBlank() }?.trim(),
+            beneficiaryName = beneficiaryName?.takeIf { it.isNotBlank() }?.trim(),
             createdBy = actorUserId,
             createdAt = System.currentTimeMillis()
         )

@@ -79,17 +79,41 @@ class ReceiptViewModel(
             escBuilder.printLine("  ${item.quantity} x P${String.format("%.2f", item.price)}")
         }
 
+        val subtotal = items.sumOf { it.price * it.quantity }
+        val isExempt = order.discountType == "Senior" || order.discountType == "PWD"
+        val discRate = if (order.discountRate > 0) order.discountRate else 20.0
+
         escBuilder.printDashedLine()
+            .printRow("Subtotal:", "P${String.format("%.2f", subtotal)}")
+
         if (order.promoDiscountAmount > 0) {
             escBuilder.printRow("Promo (${order.promoName ?: ""})", "-P${String.format("%.2f", order.promoDiscountAmount)}")
         }
 
-        escBuilder.alignRight()
-            .bold(true)
-            .printLine("TOTAL: P${String.format("%.2f", order.totalAmount)}")
+        if (isExempt && order.discountAmount > 0) {
+            escBuilder.printRow("${order.discountType} Disc (${discRate.toInt()}%):", "-P${String.format("%.2f", order.discountAmount)}")
+        }
+
+        escBuilder.bold(true)
+            .printRow("TOTAL:", "P${String.format("%.2f", order.totalAmount)}")
             .bold(false)
-            .alignCenter()
             .printDashedLine()
+
+        val hasCustomerMeta = !order.customerName.isNull_or_blank()
+        val hasPromoMeta = !order.promoName.isNull_or_blank()
+        if (hasCustomerMeta || isExempt || hasPromoMeta) {
+            escBuilder.alignLeft()
+            if (hasCustomerMeta) escBuilder.printLine("Customer: ${order.customerName}")
+            if (hasPromoMeta) escBuilder.printLine("Applied Promo: ${order.promoName}")
+            if (isExempt) {
+                escBuilder.printLine("Discount: ${order.discountType} (${discRate.toInt()}%)")
+                if (!order.discountIdNumber.isNull_or_blank()) escBuilder.printLine("${order.discountType} ID: ${order.discountIdNumber}")
+                if (!order.beneficiaryName.isNull_or_blank()) escBuilder.printLine("Beneficiary: ${order.beneficiaryName}")
+            }
+            escBuilder.printDashedLine()
+        }
+
+        escBuilder.alignCenter()
             .printLine(settings.receiptFooter.ifBlank { "Thank you for supporting Local!!!" })
             .printDashedLine()
             .printQrCode("POS-ORD#$orderNo-${order.id}", size = 5)

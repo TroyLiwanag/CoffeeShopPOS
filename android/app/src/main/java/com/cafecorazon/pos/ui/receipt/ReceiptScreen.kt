@@ -180,11 +180,27 @@ fun ReceiptScreen(
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                            // Totals
+                            // Totals & Discounts
+                            val subtotal = items.sumOf { it.price * it.quantity }
+                            val isExempt = order.discountType == "Senior" || order.discountType == "PWD"
+                            val discRate = if (order.discountRate > 0) order.discountRate else 20.0
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Subtotal", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                Text("₱${String.format("%.2f", subtotal)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                            }
+
                             if (order.promoDiscountAmount > 0) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Promo (${order.promoName ?: ""})", fontSize = 12.sp, color = CaramelAccent, fontFamily = FontFamily.Monospace)
                                     Text("-₱${String.format("%.2f", order.promoDiscountAmount)}", fontSize = 12.sp, color = CaramelAccent, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+
+                            if (isExempt && order.discountAmount > 0) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("${order.discountType} Discount (${discRate.toInt()}%)", fontSize = 12.sp, color = CaramelAccent, fontFamily = FontFamily.Monospace)
+                                    Text("-₱${String.format("%.2f", order.discountAmount)}", fontSize = 12.sp, color = CaramelAccent, fontFamily = FontFamily.Monospace)
                                 }
                             }
 
@@ -203,9 +219,27 @@ fun ReceiptScreen(
                                 Text("₱${String.format("%.2f", order.totalAmount)}", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                             }
 
-                            if (!order.customerName.isNull_or_blank()) {
+                            val hasCustomer = !order.customerName.isNull_or_blank()
+                            val hasPromo = !order.promoName.isNull_or_blank()
+                            if (hasCustomer || isExempt || hasPromo) {
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                                Text("Customer: ${order.customerName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    if (hasCustomer) {
+                                        Text("Customer: ${order.customerName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                    }
+                                    if (hasPromo) {
+                                        Text("Applied Promo: ${order.promoName} (-₱${String.format("%.2f", order.promoDiscountAmount)})", fontSize = 11.sp, color = CaramelAccent, fontFamily = FontFamily.Monospace)
+                                    }
+                                    if (isExempt) {
+                                        Text("Applied Discount: ${order.discountType} (${discRate.toInt()}%)", fontSize = 11.sp, color = CaramelAccent, fontFamily = FontFamily.Monospace)
+                                        if (!order.discountIdNumber.isNull_or_blank()) {
+                                            Text("${order.discountType} ID: ${order.discountIdNumber}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                        }
+                                        if (!order.beneficiaryName.isNull_or_blank()) {
+                                            Text("Beneficiary: ${order.beneficiaryName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                        }
+                                    }
+                                }
                             }
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

@@ -227,6 +227,11 @@ class PosViewModel(
                 promoId = state.selectedPromo?.id,
                 promoName = state.selectedPromo?.promoName,
                 promoDiscountAmount = getPromoDiscountAmount(),
+                discountType = state.selectedDiscountType,
+                discountAmount = getDiscountAmount(),
+                discountRate = if (state.selectedDiscountType == "Senior" || state.selectedDiscountType == "PWD") 20.0 else 0.0,
+                discountIdNumber = state.discountIdNumber,
+                beneficiaryName = state.discountBeneficiary,
                 actorUserId = sessionUser?.id,
                 actorUserName = sessionUser?.fullname
             )
