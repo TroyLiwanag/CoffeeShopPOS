@@ -8,6 +8,7 @@ import api from "@/lib/api";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { withActionFeedbackSafe } from "@/lib/action-feedback";
 import { SalesTrendChart } from "@/components/reports/SalesTrendChart";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 
 type TrendBucket = {
   dayKey: string;
@@ -55,6 +56,7 @@ type Range = "Daily" | "Weekly" | "Monthly" | "Quarterly" | "Yearly" | "All-Time
 function ReportsScreen() {
   const { user } = usePos();
   const [range, setRange] = useState<Range>("Daily");
+  const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
   const canExport = user && hasPermission(user.permissions, user.role, "canExportReports");
   const [summary, setSummary] = useState<{
     totalSales: number;
@@ -175,12 +177,22 @@ function ReportsScreen() {
           <h1 className="font-display text-responsive-3xl">Sales & Revenue Report</h1>
           <p className="text-sm text-muted-foreground">All reporting periods</p>
         </div>
-        <button type="button" onClick={exportCsv} disabled={!canExport}
+        <button type="button" onClick={() => setExportConfirmOpen(true)} disabled={!canExport}
                 title={canExport ? "" : "Authorized personnel only"}
                 className="btn-primary text-sm shrink-0 disabled:opacity-40">
           {canExport ? <Download className="w-4 h-4" /> : <Lock className="w-4 h-4" />} Export CSV
         </button>
       </div>
+
+      <ConfirmActionModal
+        open={exportConfirmOpen}
+        title="Export Sales Report"
+        message={`Are you sure you want to export the ${range} Sales & Revenue report?`}
+        confirmLabel="Export CSV"
+        variant="primary"
+        onClose={() => setExportConfirmOpen(false)}
+        onConfirm={exportCsv}
+      />
 
       <div className="flex flex-wrap gap-2 mb-6">
         {(["Daily", "Weekly", "Monthly", "Quarterly", "Yearly", "All-Time"] as Range[]).map(r => (
@@ -232,8 +244,123 @@ function ReportsScreen() {
           )}
         </div>
       </div>
+
+      {/* REVISION 11: Sales by Category / Best Sellers Section */}
+      <CategorySalesSection range={range} />
     </PageContainer>
     </PermissionGate>
+  );
+}
+
+function CategorySalesSection({ range }: { range: string }) {
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [categoryData, setCategoryData] = useState<Array<{
+    category: string;
+    totalQty: number;
+    totalSales: number;
+    topSeller: string;
+    items: Array<{ rank: number; productName: string; qtySold: number; salesAmount: number }>;
+  }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    api
+      .get("/reports/by-category", { params: { range, category: selectedCategory } })
+      .then(({ data }) => {
+        if (!mounted) return;
+        setCategoryData(data.categories || []);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setCategoryData([]);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [range, selectedCategory]);
+
+  return (
+    <div className="glass-card rounded-2xl border p-4 sm:p-6 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+          <h2 className="font-display text-xl">Sales by Category & Best Sellers</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Performance breakdown and ranking per menu category ({range})
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="cat-filter" className="text-xs font-medium text-muted-foreground shrink-0">Filter Category:</label>
+          <select
+            id="cat-filter"
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="px-3 py-1.5 rounded-lg border bg-background text-sm font-medium focus:ring-2 focus:ring-primary focus:outline-none"
+          >
+            <option value="all">All Categories</option>
+            <option value="Coffee">Coffee</option>
+            <option value="Non-Coffee">Non-Coffee</option>
+            <option value="Pastries">Pastries</option>
+            <option value="Food">Food</option>
+            <option value="Merchandise">Merchandise</option>
+          </select>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="py-8 text-center text-sm text-muted-foreground">Loading category analysis…</div>
+      ) : categoryData.length === 0 ? (
+        <div className="py-8 text-center text-sm text-muted-foreground">
+          No sales data found for the selected category filter and timeframe.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {categoryData.map((cat) => (
+            <div key={cat.category} className="rounded-xl border bg-card/60 p-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between border-b pb-3 mb-3">
+                  <div>
+                    <h3 className="font-display text-lg font-semibold text-primary">{cat.category}</h3>
+                    <p className="text-xs text-muted-foreground">{cat.totalQty} items sold total</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold text-base">{fmt(cat.totalSales)}</div>
+                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-600">
+                      Top: {cat.topSeller}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2.5">
+                  {cat.items.map((item) => (
+                    <div key={item.productName} className="flex items-center justify-between text-xs py-1 hover:bg-muted/50 px-1.5 rounded transition-colors">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 ${
+                          item.rank === 1 ? "bg-amber-500/20 text-amber-600" :
+                          item.rank === 2 ? "bg-slate-400/20 text-slate-600" :
+                          item.rank === 3 ? "bg-amber-700/20 text-amber-800" : "bg-muted text-muted-foreground"
+                        }`}>
+                          #{item.rank}
+                        </span>
+                        <span className="font-medium truncate">{item.productName}</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 ml-2">
+                        <span className="text-muted-foreground font-mono">{item.qtySold} sold</span>
+                        <span className="font-semibold text-foreground">{fmt(item.salesAmount)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

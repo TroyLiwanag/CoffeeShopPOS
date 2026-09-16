@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   usePos,
   Product,
@@ -8,7 +9,7 @@ import {
   DEFAULT_CATEGORIES,
   isProductAvailable,
 } from "@/lib/pos-store";
-import { Plus, Minus, Trash2, ShoppingCart, X, Search } from "lucide-react";
+import { Plus, Minus, Trash2, ShoppingCart, X, Search, Pencil, RotateCcw } from "lucide-react";
 import { MenuItemVisual } from "@/components/menu/MenuItemVisual";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
 import { ProcessingOverlay, type ProcessingState } from "@/components/ProcessingOverlay";
@@ -34,23 +35,45 @@ function buildQuickCartItem(product: Product): CartItem {
     sugar: "",
     milk: "",
     addons: [],
+    addonsDetails: [],
+    basePrice: product.price,
     notes: "",
     unitPrice: product.price,
+    itemTotal: product.price,
   };
 }
 
 function CartItemMeta({ item }: { item: CartItem }) {
+  const base = item.basePrice ?? item.product.price;
   const opts = [item.size, item.sugar, item.milk].filter(Boolean);
-  if (opts.length === 0 && item.addons.length === 0) return null;
+
   return (
-    <>
+    <div className="text-xs space-y-1 mt-1">
+      <div className="text-muted-foreground flex justify-between">
+        <span>Base Price:</span>
+        <span className="font-mono">{fmt(base)}</span>
+      </div>
       {opts.length > 0 && (
-        <div className="text-xs text-muted-foreground mt-0.5">{opts.join(" · ")}</div>
+        <div className="text-muted-foreground">Options: {opts.join(" · ")}</div>
       )}
-      {item.addons.length > 0 && (
-        <div className="text-xs text-muted-foreground truncate">+ {item.addons.join(", ")}</div>
-      )}
-    </>
+      {item.addonsDetails && item.addonsDetails.length > 0 ? (
+        <div className="space-y-0.5 pt-0.5">
+          <span className="font-semibold text-foreground">Add-ons:</span>
+          {item.addonsDetails.map((a, idx) => (
+            <div key={idx} className="flex justify-between text-muted-foreground pl-2">
+              <span>+ {a.name}</span>
+              <span className="font-mono">+{fmt(a.price)}</span>
+            </div>
+          ))}
+        </div>
+      ) : item.addons.length > 0 ? (
+        <div className="text-muted-foreground">+ Add-ons: {item.addons.join(", ")}</div>
+      ) : null}
+      <div className="flex justify-between font-semibold text-foreground pt-1 border-t border-dashed">
+        <span>Item Total:</span>
+        <span className="font-mono">{fmt((item.unitPrice || base) * item.qty)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -58,7 +81,8 @@ const SIZES = [{ name: "Medium", add: 0 }, { name: "Large", add: 20 }];
 const SUGAR = ["No sugar", "Less", "Normal", "Extra"];
 const MILK = ["Whole", "Oat (+₱10)", "Almond (+₱10)", "None"];
 const ADDONS = [
-  { name: "Extra shot", price: 20 },
+  { name: "Extra shot", price: 25 },
+  { name: "Almond milk", price: 20 },
   { name: "Whipped cream", price: 15 },
   { name: "Vanilla syrup", price: 10 },
   { name: "Caramel drizzle", price: 10 },
@@ -78,8 +102,10 @@ function PosScreen() {
     user,
     cart,
     addToCart,
+    updateCartItem,
     removeFromCart,
     updateQty,
+    clearCart,
     cartSubtotal,
     vatAmount,
     serviceCharge,
@@ -92,8 +118,10 @@ function PosScreen() {
   const [category, setCategory] = useState<string>("Coffee");
   const [search, setSearch] = useState("");
   const [modalProduct, setModalProduct] = useState<Product | null>(null);
+  const [editingCartItem, setEditingCartItem] = useState<CartItem | null>(null);
   const [floatingCartOpen, setFloatingCartOpen] = useState(false);
   const [cartRemoveId, setCartRemoveId] = useState<string | null>(null);
+  const [clearCartModalOpen, setClearCartModalOpen] = useState(false);
 
   const categories = useMemo(() => {
     const fromMenu = [...new Set(menuItems.map((p) => p.category))];
@@ -136,6 +164,64 @@ function PosScreen() {
   });
   const dateTimeLine = `${weekday}, ${monthDay} / ${time}`;
 
+  const renderCartItemsList = (
+    <div className="flex-1 overflow-y-auto overscroll-contain p-3 md:p-4 space-y-3 min-h-0">
+      {cart.length === 0 && (
+        <div className="text-center text-sm text-muted-foreground py-10 md:py-12">
+          Cart is empty. Tap a product to start.
+        </div>
+      )}
+      {cart.map((item) => (
+        <div key={item.id} className="glass-card rounded-xl p-3 border animate-fade-up space-y-2">
+          <div className="flex justify-between items-start gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-sm text-foreground truncate">{item.qty}× {item.product.name}</div>
+              <CartItemMeta item={item} />
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setEditingCartItem(item)}
+                className="p-1.5 text-muted-foreground hover:text-accent rounded-lg hover:bg-muted touch-manipulation transition-colors"
+                title="Edit item options & add-ons"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCartRemoveId(item.id)}
+                className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg hover:bg-muted touch-manipulation transition-colors"
+                title="Remove item"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1 border-t">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => updateQty(item.id, -1)}
+                className="w-8 h-8 rounded-full bg-muted hover:bg-border flex items-center justify-center touch-manipulation active:scale-95 transition-transform text-xs"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="w-7 text-center text-sm font-semibold">{item.qty}</span>
+              <button
+                type="button"
+                onClick={() => updateQty(item.id, 1)}
+                className="w-8 h-8 rounded-full bg-muted hover:bg-border flex items-center justify-center touch-manipulation active:scale-95 transition-transform text-xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="font-bold text-sm text-accent">{fmt((item.unitPrice || item.product.price) * item.qty)}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   const cartPanel = (
     <>
       <div className="px-4 py-3 md:px-5 md:py-4 border-b flex items-center justify-between shrink-0 glass-bar">
@@ -143,56 +229,25 @@ function PosScreen() {
           <ShoppingCart className="w-5 h-5 text-primary" />
           <h2 className="font-display text-lg md:text-xl">Current Order</h2>
         </div>
-        <span className="text-xs bg-muted px-2.5 py-1 rounded-full font-medium">
-          {cart.length} items
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs bg-muted px-2.5 py-1 rounded-full font-medium">
+            {cart.length} items
+          </span>
+          {cart.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setClearCartModalOpen(true)}
+              className="p-1 text-xs text-destructive hover:bg-destructive/10 rounded-lg flex items-center gap-1"
+              title="Clear entire cart"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col flex-1 min-h-0">
-        <div className="flex-1 overflow-y-auto overscroll-contain p-3 md:p-4 space-y-2 min-h-0">
-          {cart.length === 0 && (
-            <div className="text-center text-sm text-muted-foreground py-10 md:py-12">
-              Cart is empty. Tap a product to start.
-            </div>
-          )}
-          {cart.map((item) => (
-            <div key={item.id} className="glass-card rounded-xl p-3 border animate-fade-up">
-              <div className="flex justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm truncate">{item.product.name}</div>
-                  <CartItemMeta item={item} />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCartRemoveId(item.id)}
-                  className="p-2 -m-1 text-muted-foreground hover:text-destructive touch-manipulation"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => updateQty(item.id, -1)}
-                    className="w-10 h-10 rounded-full bg-muted hover:bg-border flex items-center justify-center touch-manipulation active:scale-95 transition-transform"
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <span className="w-8 text-center text-sm font-semibold">{item.qty}</span>
-                  <button
-                    type="button"
-                    onClick={() => updateQty(item.id, 1)}
-                    className="w-10 h-10 rounded-full bg-muted hover:bg-border flex items-center justify-center touch-manipulation active:scale-95 transition-transform"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="font-semibold text-sm">{fmt(item.unitPrice * item.qty)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+        {renderCartItemsList}
 
         <div className="border-t p-4 md:p-5 space-y-2 bg-card/95 backdrop-blur-sm shrink-0 safe-bottom">
           <Row label="Subtotal" value={fmt(cartSubtotal)} />
@@ -462,6 +517,18 @@ function PosScreen() {
           />
         ))}
 
+      {editingCartItem && (
+        <CustomizeModal
+          product={editingCartItem.product}
+          initialItem={editingCartItem}
+          onClose={() => setEditingCartItem(null)}
+          onAdd={(updated) => {
+            updateCartItem(editingCartItem.id, updated);
+            setEditingCartItem(null);
+          }}
+        />
+      )}
+
       <ConfirmDeleteModal
         open={cartRemoveId !== null}
         title="Remove from cart"
@@ -470,6 +537,18 @@ function PosScreen() {
         onClose={() => setCartRemoveId(null)}
         onConfirm={async () => {
           if (cartRemoveId) removeFromCart(cartRemoveId);
+        }}
+      />
+
+      <ConfirmDeleteModal
+        open={clearCartModalOpen}
+        title="Cancel Transaction & Clear Cart"
+        detail="Are you sure you want to cancel this order and remove all items from the cart? This action cannot be undone."
+        confirmLabel="Clear Cart"
+        onClose={() => setClearCartModalOpen(false)}
+        onConfirm={async () => {
+          clearCart();
+          setClearCartModalOpen(false);
         }}
       />
     </div>
@@ -591,26 +670,34 @@ function SimpleAddModal({
 
 function CustomizeModal({
   product,
+  initialItem,
   onClose,
   onAdd,
 }: {
   product: Product;
+  initialItem?: CartItem | null;
   onClose: () => void;
   onAdd: (i: CartItem) => void;
 }) {
-  const [size, setSize] = useState(SIZES[1].name);
-  const [sugar, setSugar] = useState(SUGAR[2]);
-  const [milk, setMilk] = useState(MILK[0]);
-  const [addons, setAddons] = useState<string[]>([]);
-  const [notes, setNotes] = useState("");
+  const [size, setSize] = useState(initialItem?.size || SIZES[1].name);
+  const [sugar, setSugar] = useState(initialItem?.sugar || SUGAR[2]);
+  const [milk, setMilk] = useState(initialItem?.milk || MILK[0]);
+  const [addons, setAddons] = useState<string[]>(initialItem?.addons || []);
+  const [notes, setNotes] = useState(initialItem?.notes || "");
+  const [qty, setQty] = useState(initialItem?.qty || 1);
 
+  const basePrice = product.price;
   const sizeAdd = SIZES.find((s) => s.name === size)?.add ?? 0;
   const milkAdd = milk.includes("+₱10") ? 10 : 0;
-  const addonsTotal = ADDONS.filter((a) => addons.includes(a.name)).reduce(
-    (s, a) => s + a.price,
-    0,
-  );
-  const unitPrice = product.price + sizeAdd + milkAdd + addonsTotal;
+  const selectedAddons = ADDONS.filter((a) => addons.includes(a.name));
+  const addonsTotal = selectedAddons.reduce((s, a) => s + a.price, 0);
+
+  const addonsDetails = [...selectedAddons];
+  if (sizeAdd > 0) addonsDetails.unshift({ name: `Size ${size}`, price: sizeAdd });
+  if (milkAdd > 0) addonsDetails.unshift({ name: milk, price: milkAdd });
+
+  const unitPrice = basePrice + sizeAdd + milkAdd + addonsTotal;
+  const itemTotal = unitPrice * qty;
 
   const toggle = (name: string) =>
     setAddons((a) => (a.includes(name) ? a.filter((x) => x !== name) : [...a, name]));
@@ -622,28 +709,31 @@ function CustomizeModal({
     if (adding) return;
     setAdding(true);
     setOverlay("processing");
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 300));
     onAdd({
-      id: crypto.randomUUID(),
+      id: initialItem?.id || crypto.randomUUID(),
       product,
-      qty: 1,
+      qty,
       size,
       sugar,
       milk,
       addons,
+      addonsDetails,
+      basePrice,
       notes,
       unitPrice,
+      itemTotal,
     });
     setOverlay("success");
-    await new Promise((r) => setTimeout(r, 550));
+    await new Promise((r) => setTimeout(r, 400));
     onClose();
     setOverlay("idle");
     setAdding(false);
   };
 
-  return (
+  const modal = (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 modal-backdrop animate-fade-in"
+      className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-0 sm:p-4 modal-backdrop animate-fade-in"
       onClick={onClose}
     >
       <div
@@ -652,8 +742,8 @@ function CustomizeModal({
       >
         <ProcessingOverlay
           state={overlay}
-          processingLabel="Adding to cart…"
-          successLabel="Added to cart!"
+          processingLabel={initialItem ? "Saving changes…" : "Adding to cart…"}
+          successLabel={initialItem ? "Changes saved!" : "Added to cart!"}
         />
         <div className="sticky top-0 z-10 glass-bar px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 rounded-t-2xl sm:rounded-t-2xl">
           <div className="flex items-center gap-3 min-w-0">
@@ -675,8 +765,10 @@ function CustomizeModal({
               )}
             </div>
             <div className="min-w-0">
-              <h3 className="font-display text-responsive-lg truncate">{product.name}</h3>
-              <div className="text-sm text-muted-foreground">{fmt(product.price)} base</div>
+              <h3 className="font-display text-responsive-lg truncate">
+                {initialItem ? `Edit ${product.name}` : product.name}
+              </h3>
+              <div className="text-sm text-muted-foreground">{fmt(basePrice)} base price</div>
             </div>
           </div>
           <button
@@ -689,6 +781,26 @@ function CustomizeModal({
         </div>
 
         <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1 overscroll-contain">
+          <Section label="Quantity">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                className="w-10 h-10 rounded-xl border bg-muted flex items-center justify-center font-bold text-lg"
+              >
+                -
+              </button>
+              <span className="font-display text-xl font-bold w-10 text-center">{qty}</span>
+              <button
+                type="button"
+                onClick={() => setQty((q) => q + 1)}
+                className="w-10 h-10 rounded-xl border bg-muted flex items-center justify-center font-bold text-lg"
+              >
+                +
+              </button>
+            </div>
+          </Section>
+
           <Section label="Size">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {SIZES.map((s) => (
@@ -731,9 +843,9 @@ function CustomizeModal({
                       onChange={() => toggle(a.name)}
                       className="w-5 h-5 accent-[var(--caramel)]"
                     />
-                    <span className="text-sm">{a.name}</span>
+                    <span className="text-sm font-medium">{a.name}</span>
                   </div>
-                  <span className="text-sm font-medium">+{fmt(a.price)}</span>
+                  <span className="text-sm font-bold text-accent">+{fmt(a.price)}</span>
                 </label>
               ))}
             </div>
@@ -751,16 +863,18 @@ function CustomizeModal({
 
         <div className="sticky bottom-0 glass-bar border-t p-4 sm:p-5 flex items-center justify-between gap-3 safe-bottom rounded-b-2xl">
           <div>
-            <div className="text-xs text-muted-foreground">Item total</div>
-            <div className="font-display text-responsive-xl">{fmt(unitPrice)}</div>
+            <div className="text-xs text-muted-foreground">Item total ({qty}×)</div>
+            <div className="font-display text-responsive-xl text-primary">{fmt(itemTotal)}</div>
           </div>
           <button type="button" onClick={submit} disabled={adding} className="btn-primary flex-1 py-4 min-h-[52px]">
-            {adding ? "Processing…" : "Add to cart"}
+            {adding ? "Saving…" : initialItem ? "Save changes" : "Add to cart"}
           </button>
         </div>
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(modal, document.body) : null;
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {

@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { usePos, type Settings } from "@/lib/pos-store";
 import { LogOut, RotateCcw, Save, Printer, Bluetooth, CheckCircle2 } from "lucide-react";
-import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 import { PermissionGate } from "@/components/PermissionGate";
 import { withActionFeedbackSafe } from "@/lib/action-feedback";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -30,7 +30,9 @@ function settingsEqual(a: Settings, b: Settings) {
     a.printerEnabled === b.printerEnabled &&
     a.printerName === b.printerName &&
     a.printerPaperWidth === b.printerPaperWidth &&
-    a.printerConnectionType === b.printerConnectionType
+    a.printerConnectionType === b.printerConnectionType &&
+    a.paymongoPublicKey === b.paymongoPublicKey &&
+    a.paymongoSecretKey === b.paymongoSecretKey
   );
 }
 
@@ -40,6 +42,7 @@ function SettingsScreen() {
   const [draft, setDraft] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
 
   useEffect(() => {
     setDraft(settings);
@@ -131,6 +134,10 @@ function SettingsScreen() {
           <div class="line"></div>
           <div class="right bold" style="font-size: 12px;">TOTAL: P104.00</div>
           <div class="line"></div>
+          <div>VATable Sales: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; P92.86</div>
+          <div>VAT Amount (12%): &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; P11.14</div>
+          <div>VAT Exempt Sales: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; P0.00</div>
+          <div class="line"></div>
           <div class="center">${draft.receiptFooter || "Thank you for supporting Local!!!"}</div>
           <div class="center" style="margin-top: 12px;">- - - - - CUT HERE - - - - -</div>
           <script>
@@ -182,7 +189,7 @@ function SettingsScreen() {
             </button>
             <button
               type="button"
-              onClick={save}
+              onClick={() => setSaveConfirmOpen(true)}
               disabled={!dirty || saving}
               className="btn-primary text-sm min-h-[44px] flex items-center gap-2"
             >
@@ -190,6 +197,30 @@ function SettingsScreen() {
             </button>
           </div>
         </div>
+
+        <ConfirmActionModal
+          open={resetConfirmOpen}
+          title="Reset Store Settings"
+          message="Are you sure you want to reset all store settings back to default values?"
+          detail="This will restore default business details, VAT, and printer configurations."
+          confirmLabel="Reset Defaults"
+          variant="destructive"
+          onClose={() => setResetConfirmOpen(false)}
+          onConfirm={async () => {
+            setDraft(settings);
+          }}
+        />
+
+        <ConfirmActionModal
+          open={saveConfirmOpen}
+          title="Save Store Settings"
+          message="Are you sure you want to save these store settings changes?"
+          detail="Updates will take effect immediately across all POS terminals."
+          confirmLabel="Save Settings"
+          variant="primary"
+          onClose={() => setSaveConfirmOpen(false)}
+          onConfirm={save}
+        />
 
         <div className="space-y-6">
           <Section title="Store profile">
@@ -254,6 +285,25 @@ function SettingsScreen() {
           <p className="text-xs text-muted-foreground">
             Senior Citizens (RA 9994) and PWDs (RA 10754) receive these discounts and are exempt from VAT.
             Changes apply immediately to the POS after you save.
+          </p>
+        </Section>
+
+        <Section title="PayMongo Payment Gateway API (GCash & Dynamic QRPh)">
+          <Field
+            label="PayMongo Public Key (pk_test_... or pk_live_...)"
+            value={draft.paymongoPublicKey || ""}
+            onChange={(v) => setDraft((d) => ({ ...d, paymongoPublicKey: v }))}
+            placeholder="pk_test_your_public_key_here"
+          />
+          <Field
+            label="PayMongo Secret Key (sk_test_... or sk_live_...)"
+            type="password"
+            value={draft.paymongoSecretKey || ""}
+            onChange={(v) => setDraft((d) => ({ ...d, paymongoSecretKey: v }))}
+            placeholder="sk_test_your_secret_key_here"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Get your live API keys from <a href="https://dashboard.paymongo.com" target="_blank" rel="noreferrer" className="text-accent underline font-semibold">PayMongo Dashboard</a>. PayMongo API automatically generates dynamic QRPh codes and listens to instant GCash payment webhooks.
           </p>
         </Section>
 
@@ -355,7 +405,7 @@ function SettingsScreen() {
         </Section>
       </div>
 
-        <div className="pt-6 border-t border-border flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between safe-bottom">
+        <div className="pt-6 border-t border-border flex items-center justify-between safe-bottom">
           <button
             type="button"
             onClick={async () => {
@@ -370,41 +420,11 @@ function SettingsScreen() {
                 },
               );
             }}
-            className="px-5 py-3 min-h-[48px] rounded-lg bg-destructive text-destructive-foreground font-medium inline-flex items-center justify-center gap-2 hover:opacity-90 touch-manipulation shrink-0 self-start"
+            className="px-5 py-3 min-h-[48px] rounded-lg bg-destructive text-destructive-foreground font-medium inline-flex items-center justify-center gap-2 hover:opacity-90 touch-manipulation shrink-0"
           >
             <LogOut className="w-4 h-4" /> Log out
           </button>
-          <div className="flex flex-wrap gap-2 justify-end self-end sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setResetConfirmOpen(true)}
-              disabled={!dirty || saving}
-              className="px-4 py-3 min-h-[48px] rounded-lg border bg-card hover:bg-muted text-sm font-medium inline-flex items-center justify-center gap-2 touch-manipulation disabled:opacity-45"
-            >
-              <RotateCcw className="w-4 h-4" /> Reset
-            </button>
-            <button
-              type="button"
-              onClick={() => void save()}
-              disabled={!dirty || saving || !hydrated}
-              className="btn-primary px-4 py-3 min-h-[48px] text-sm disabled:opacity-45"
-            >
-              <Save className="w-4 h-4" /> {saving ? "Saving…" : "Save changes"}
-            </button>
-          </div>
         </div>
-
-        <ConfirmDeleteModal
-          open={resetConfirmOpen}
-          title="Reset changes"
-          message="Are you sure???"
-          detail="Unsaved edits will be discarded."
-          confirmLabel="Reset"
-          onClose={() => setResetConfirmOpen(false)}
-          onConfirm={() => {
-            setDraft(settings);
-          }}
-        />
       </PageContainer>
     </PermissionGate>
   );

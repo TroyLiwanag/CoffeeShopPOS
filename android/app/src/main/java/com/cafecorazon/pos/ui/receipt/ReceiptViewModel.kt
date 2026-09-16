@@ -94,10 +94,26 @@ class ReceiptViewModel(
             escBuilder.printRow("${order.discountType} Disc (${discRate.toInt()}%):", "-P${String.format("%.2f", order.discountAmount)}")
         }
 
+        val vatRate = if (settings.vatRate > 0) settings.vatRate else 12.0
+        val vatableSales = if (isExempt) 0.0 else if (settings.vatEnabled) order.totalAmount / (1.0 + vatRate / 100.0) else order.totalAmount
+        val vatAmount = if (isExempt) 0.0 else if (settings.vatEnabled) order.totalAmount - vatableSales else 0.0
+        val vatExemptSales = if (isExempt) Math.max(0.0, subtotal - order.promoDiscountAmount - order.discountAmount) else 0.0
+
         escBuilder.bold(true)
             .printRow("TOTAL:", "P${String.format("%.2f", order.totalAmount)}")
             .bold(false)
-            .printDashedLine()
+
+        if (isExempt) {
+            escBuilder.printRow("VATable Sales:", "P0.00")
+            escBuilder.printRow("VAT Amount (${vatRate.toInt()}%):", "P0.00")
+            escBuilder.printRow("VAT Exempt Sales:", "P${String.format("%.2f", vatExemptSales)}")
+        } else if (settings.vatEnabled) {
+            escBuilder.printRow("VATable Sales:", "P${String.format("%.2f", vatableSales)}")
+            escBuilder.printRow("VAT Amount (${vatRate.toInt()}%):", "P${String.format("%.2f", vatAmount)}")
+            escBuilder.printRow("VAT Exempt Sales:", "P0.00")
+        }
+
+        escBuilder.printDashedLine()
 
         val hasCustomerMeta = !order.customerName.isNull_or_blank()
         val hasPromoMeta = !order.promoName.isNull_or_blank()

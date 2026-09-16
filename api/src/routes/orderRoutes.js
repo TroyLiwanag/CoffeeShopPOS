@@ -9,5 +9,6 @@ router.get("/", requirePermission("canViewDashboard"), orderController.list);
 /** POS checkout: staff with dashboard access can place orders */
 router.post("/", requirePermission("canViewDashboard"), orderController.create);
 router.patch("/:id/status", requirePermission("canManageOrders"), orderController.updateStatus);
+router.post("/:id/void", requirePermission("canManageOrders"), orderController.voidOrder);
 
 export default router;

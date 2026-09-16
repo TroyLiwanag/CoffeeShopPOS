@@ -1,12 +1,14 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { usePos, fmt, DiscountType, getExemptDiscountRate } from "@/lib/pos-store";
-import { Banknote, BadgePercent, Tag, Check, X, Sparkles, AlertCircle } from "lucide-react";
+import { Banknote, BadgePercent, Tag, Check, X, Sparkles, AlertCircle, QrCode, ShieldCheck } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { cn } from "@/lib/utils";
 import { withActionFeedback } from "@/lib/action-feedback";
 import { fetchPromos, type Promo } from "@/lib/promo-api";
 import { toast } from "sonner";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
+import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/payment")({
   component: PaymentScreen,
@@ -40,11 +42,42 @@ function PaymentScreen() {
   const navigate = useNavigate();
   const [method, setMethod] = useState<"Cash" | "QR">("Cash");
   const [cashGiven, setCashGiven] = useState("");
+  const [qrReference, setQrReference] = useState("");
   const [customer, setCustomer] = useState({ name: "", address: "", tin: "" });
   const [confirming, setConfirming] = useState(false);
+  const [paymentConfirmOpen, setPaymentConfirmOpen] = useState(false);
   const [promoModalOpen, setPromoModalOpen] = useState(false);
   const [availablePromos, setAvailablePromos] = useState<Promo[]>([]);
   const [loadingPromos, setLoadingPromos] = useState(false);
+
+  // PayMongo Live API Integration States
+  const [paymongoLoading, setPaymongoLoading] = useState(false);
+  const [paymongoSource, setPaymongoSource] = useState<{
+    sourceId: string;
+    checkoutUrl: string;
+    qrCodeUrl: string;
+    status: string;
+  } | null>(null);
+
+  const handleGeneratePayMongoQR = async (type: "gcash" | "qrph" = "gcash") => {
+    setPaymongoLoading(true);
+    try {
+      const { data } = await api.post("/payments/paymongo/create-source", {
+        amount: cartTotal,
+        type,
+        customerName: customer.name || "Cafe Corazon Customer",
+      });
+      if (data.success && data.sourceId) {
+        setPaymongoSource(data);
+        setQrReference(`PAYMONGO-${data.sourceId.slice(-8).toUpperCase()}`);
+        toast.success(`Generated PayMongo ${type.toUpperCase()} QR Code!`);
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "PayMongo API key not configured or request failed.");
+    } finally {
+      setPaymongoLoading(false);
+    }
+  };
 
   const isExempt = discount.type === "Senior" || discount.type === "PWD";
   const exemptDiscountRate = getExemptDiscountRate(settings, discount.type);
@@ -74,10 +107,12 @@ function PaymentScreen() {
   }
 
   const change = method === "Cash" ? Math.max(0, Number(cashGiven || 0) - cartTotal) : 0;
-  const canConfirm = (method === "QR" || Number(cashGiven || 0) >= cartTotal) &&
-    (!isExempt || (discount.idNumber && discount.beneficiary));
+  const canConfirm = (
+    (method === "Cash" && Number(cashGiven || 0) >= cartTotal) ||
+    (method === "QR" && qrReference.trim().length >= 4)
+  ) && (!isExempt || (discount.idNumber && discount.beneficiary));
 
-  const confirm = async () => {
+  const handleConfirmSubmit = () => {
     if (confirming) return;
 
     if (isExempt) {
@@ -102,10 +137,19 @@ function PaymentScreen() {
       return;
     }
 
+    if (method === "QR" && !qrReference.trim()) {
+      toast.error("Please enter the GCash payment reference number.");
+      return;
+    }
+
+    setPaymentConfirmOpen(true);
+  };
+
+  const performPaymentProcess = async () => {
     setConfirming(true);
     try {
       const order = await withActionFeedback(
-        () => placeOrder(method, customer, Number(cashGiven || cartTotal), "Dine in"),
+        () => placeOrder(method, customer, method === "Cash" ? Number(cashGiven || cartTotal) : cartTotal, "Dine in"),
         {
           loading: "Processing payment…",
           success: "Payment complete!",
@@ -134,7 +178,8 @@ function PaymentScreen() {
                   <div>
                     <div className="font-medium">{i.qty}× {i.product.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {i.size}, {i.milk} · Batch {i.product.batchNo}
+                      {i.size ? `${i.size}, ` : ""}{i.milk || "Whole"}
+                      {i.addons.length > 0 ? ` · Add-ons: ${i.addons.join(", ")}` : ""}
                     </div>
                   </div>
                   <div className="font-medium">{fmt(i.unitPrice * i.qty)}</div>
@@ -215,7 +260,7 @@ function PaymentScreen() {
             )}
           </div>
 
-          {/* Customer form (receipt) */}
+          {/* Customer details */}
           <div className="glass-card rounded-2xl border p-4 sm:p-6">
             <h2 className="font-display text-lg mb-4">Customer details (for receipt)</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -277,18 +322,48 @@ function PaymentScreen() {
 
         <div className="lg:col-span-2">
           <div className="space-y-4 lg:sticky lg:top-24">
-            <div className="glass-card rounded-2xl border p-4 sm:p-6">
-              <h2 className="font-display text-xl mb-4">Payment method</h2>
-              <div className="p-3.5 rounded-xl border bg-primary/10 border-primary/30 flex items-center gap-3">
-                <Banknote className="w-6 h-6 text-primary shrink-0" />
-                <div>
-                  <div className="font-semibold text-sm text-foreground">Cash Payment</div>
-                  <div className="text-xs text-muted-foreground">Cash payment on counter</div>
-                </div>
+            <div className="glass-card rounded-2xl border p-4 sm:p-6 space-y-4">
+              <h2 className="font-display text-xl mb-2">Payment method</h2>
+
+              {/* Payment Method Selector Tabs */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMethod("Cash")}
+                  className={cn(
+                    "p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left touch-manipulation active:scale-95",
+                    method === "Cash"
+                      ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                      : "hover:bg-muted border-border",
+                  )}
+                >
+                  <Banknote className="w-5 h-5 shrink-0" />
+                  <div>
+                    <div className="font-bold text-sm">Cash</div>
+                    <div className="text-[11px] opacity-80">Counter cash</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMethod("QR")}
+                  className={cn(
+                    "p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left touch-manipulation active:scale-95",
+                    method === "QR"
+                      ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                      : "hover:bg-muted border-border",
+                  )}
+                >
+                  <QrCode className="w-5 h-5 shrink-0" />
+                  <div>
+                    <div className="font-bold text-sm">GCash / QR</div>
+                    <div className="text-[11px] opacity-80">Scan QR Code</div>
+                  </div>
+                </button>
               </div>
 
               {method === "Cash" && (
-                <div className="mt-5 space-y-3">
+                <div className="mt-4 space-y-3">
                   <label className="text-sm font-medium">Cash received</label>
                   <input value={cashGiven} onChange={e => setCashGiven(e.target.value)} type="number" placeholder="0.00"
                     className="w-full px-4 py-3 min-h-[48px] rounded-lg border bg-background text-lg" />
@@ -304,19 +379,137 @@ function PaymentScreen() {
                   </div>
                 </div>
               )}
+
+              {method === "QR" && (
+                <div className="mt-4 p-4 rounded-xl border bg-blue-500/10 border-blue-500/20 space-y-4 animate-fade-in">
+                  <div className="text-center space-y-2">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-600 text-white text-xs font-bold shadow-xs">
+                      <ShieldCheck className="w-4 h-4" /> GCash / QRPh Merchant Payment
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Scan the QR code with GCash or any QRPh app to pay <strong className="text-foreground">{fmt(cartTotal)}</strong>
+                    </p>
+                  </div>
+
+                  {/* PayMongo API Generator Button */}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleGeneratePayMongoQR("gcash")}
+                      disabled={paymongoLoading}
+                      className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {paymongoLoading ? "Generating..." : `Generate PayMongo Live QR (${fmt(cartTotal)})`}
+                    </button>
+                    {paymongoSource?.checkoutUrl && (
+                      <a
+                        href={paymongoSource.checkoutUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center justify-center transition-all shadow-sm"
+                      >
+                        Open PayMongo Checkout ↗
+                      </a>
+                    )}
+                  </div>
+
+                  {/* QR Code Display Card */}
+                  <div className="bg-white p-4 rounded-xl border shadow-inner text-center space-y-2">
+                    <div className="w-48 h-48 mx-auto bg-white p-2 rounded-lg border flex items-center justify-center relative shadow-sm">
+                      {paymongoSource?.qrCodeUrl ? (
+                        <img
+                          src={paymongoSource.qrCodeUrl}
+                          alt="PayMongo Dynamic QR Code"
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <svg viewBox="0 0 100 100" className="w-full h-full text-blue-900 fill-current">
+                          <rect x="0" y="0" width="100" height="100" fill="white" />
+                          <rect x="10" y="10" width="25" height="25" fill="#005CE6" />
+                          <rect x="15" y="15" width="15" height="15" fill="white" />
+                          <rect x="18" y="18" width="9" height="9" fill="#005CE6" />
+                          <rect x="65" y="10" width="25" height="25" fill="#005CE6" />
+                          <rect x="70" y="15" width="15" height="15" fill="white" />
+                          <rect x="73" y="18" width="9" height="9" fill="#005CE6" />
+                          <rect x="10" y="65" width="25" height="25" fill="#005CE6" />
+                          <rect x="15" y="70" width="15" height="15" fill="white" />
+                          <rect x="18" y="73" width="9" height="9" fill="#005CE6" />
+                          <rect x="40" y="10" width="15" height="10" fill="#005CE6" />
+                          <rect x="40" y="25" width="10" height="15" fill="#005CE6" />
+                          <rect x="55" y="25" width="25" height="8" fill="#005CE6" />
+                          <rect x="40" y="45" width="20" height="20" fill="#005CE6" />
+                          <rect x="65" y="45" width="15" height="15" fill="#005CE6" />
+                          <rect x="45" y="70" width="20" height="15" fill="#005CE6" />
+                          <rect x="70" y="70" width="20" height="20" fill="#005CE6" />
+                        </svg>
+                      )}
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        {!paymongoSource?.qrCodeUrl && (
+                          <span className="bg-blue-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded shadow-md border border-white">
+                            GCash
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-xs font-bold text-foreground">
+                      Café Corazon • {settings.phone || "0916 583 6120"}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Amount: <strong className="text-blue-600 font-bold">{fmt(cartTotal)}</strong>
+                      {paymongoSource && (
+                        <span className="block text-emerald-600 font-semibold text-[10px]">
+                          ⚡ PayMongo Source ID: {paymongoSource.sourceId}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground">
+                      GCash Reference No. *
+                    </label>
+                    <input
+                      type="text"
+                      value={qrReference}
+                      onChange={(e) => setQrReference(e.target.value)}
+                      placeholder="e.g. 1002 948 29104"
+                      className="w-full px-3.5 py-2.5 rounded-lg border bg-background text-sm font-mono focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Enter the 13-digit transaction reference number from the customer's GCash receipt screen.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 safe-bottom">
               <button type="button" onClick={() => navigate({ to: "/pos" })}
                 className="flex-1 py-3 min-h-[48px] rounded-lg border bg-card hover:bg-muted touch-manipulation active:scale-95 transition-transform">Cancel</button>
-              <button type="button" onClick={confirm} disabled={confirming}
-                className="btn-primary flex-1 py-3 min-h-[48px]">
-                {confirming ? "Processing…" : "Confirm payment"}
+              <button type="button" onClick={handleConfirmSubmit} disabled={confirming || !canConfirm}
+                className="btn-primary flex-1 py-3 min-h-[48px] disabled:opacity-50">
+                {confirming ? "Processing…" : `Confirm ${method === "QR" ? "GCash " : ""}Payment`}
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      <ConfirmActionModal
+        open={paymentConfirmOpen}
+        title="Confirm Payment"
+        message={`Are you sure you want to complete this order payment of ${fmt(cartTotal)} via ${method === "QR" ? "GCash" : "Cash"}?`}
+        detail={
+          method === "Cash"
+            ? `Amount Tendered: ${fmt(Number(cashGiven || cartTotal))} · Change: ${fmt(change)}`
+            : `GCash Ref: ${qrReference}`
+        }
+        confirmLabel="Complete Order Payment"
+        variant="accent"
+        onClose={() => setPaymentConfirmOpen(false)}
+        onConfirm={performPaymentProcess}
+      />
       {promoModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div

@@ -131,10 +131,18 @@ export async function removeBulk(req, res) {
 async function fetchForExport(query) {
   const { where, params } = buildWhere(query);
   const [rows] = await pool.query(
-    `SELECT * FROM audit_logs ${where} ORDER BY created_at DESC LIMIT 5000`,
+    `SELECT a.*, u.role AS user_role
+     FROM audit_logs a
+     LEFT JOIN users u ON u.id = a.user_id
+     ${where}
+     ORDER BY a.created_at DESC
+     LIMIT 5000`,
     params,
   );
-  return rows.map(mapRow);
+  return rows.map((r) => ({
+    ...mapRow(r),
+    role: r.user_role ? (r.user_role.charAt(0).toUpperCase() + r.user_role.slice(1)) : "Staff",
+  }));
 }
 
 function escapeCsv(val) {
@@ -147,23 +155,27 @@ function escapeCsv(val) {
 
 export async function exportCsv(req, res) {
   const rows = await fetchForExport(req.query);
-  const header = ["ID", "User", "Action", "Module", "Description", "IP", "Device", "Date"];
+  const header = ["Audit ID", "User", "Role", "Action", "Module", "Description", "Date", "Time"];
   const lines = [
     header.join(","),
-    ...rows.map((r) =>
-      [
-        r.id,
+    ...rows.map((r) => {
+      const dt = new Date(r.createdAt);
+      const dateStr = !isNaN(dt.getTime()) ? dt.toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" }) : "";
+      const timeStr = !isNaN(dt.getTime()) ? dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }) : "";
+      const auditId = r.userId || r.id || 1;
+      return [
+        auditId,
         r.userName,
+        r.role,
         r.actionType,
         r.moduleName,
-        r.description,
-        r.ipAddress,
-        r.deviceLabel,
-        new Date(r.createdAt).toISOString(),
+        r.description || "",
+        dateStr,
+        timeStr,
       ]
         .map(escapeCsv)
-        .join(","),
-    ),
+        .join(",");
+    }),
   ];
   await logAuditFromReq(req, "Export Audit Log", "Audit", `CSV export (${rows.length} rows)`);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -177,16 +189,22 @@ export async function exportPdf(req, res) {
 
   const rowsHtml = rows
     .map(
-      (r) => `<tr>
-        <td>${r.id}</td>
-        <td>${escapeHtml(r.userName)}</td>
-        <td>${escapeHtml(r.actionType)}</td>
-        <td>${escapeHtml(r.moduleName)}</td>
-        <td>${escapeHtml(r.description || "")}</td>
-        <td>${escapeHtml(r.ipAddress || "")}</td>
-        <td>${escapeHtml(r.deviceLabel)}</td>
-        <td>${new Date(r.createdAt).toLocaleString()}</td>
-      </tr>`,
+      (r) => {
+        const dt = new Date(r.createdAt);
+        const dateStr = !isNaN(dt.getTime()) ? dt.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+        const timeStr = !isNaN(dt.getTime()) ? dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }) : "";
+        const auditId = r.userId || r.id || 1;
+        return `<tr>
+          <td>${auditId}</td>
+          <td>${escapeHtml(r.userName)}</td>
+          <td>${escapeHtml(r.role)}</td>
+          <td>${escapeHtml(r.actionType)}</td>
+          <td>${escapeHtml(r.moduleName)}</td>
+          <td>${escapeHtml(r.description || "")}</td>
+          <td>${dateStr}</td>
+          <td>${timeStr}</td>
+        </tr>`;
+      },
     )
     .join("");
 
@@ -205,8 +223,8 @@ export async function exportPdf(req, res) {
   <p class="meta">Exported ${new Date().toLocaleString()} · ${rows.length} entries</p>
   <table>
     <thead><tr>
-      <th>ID</th><th>User</th><th>Action</th><th>Module</th>
-      <th>Description</th><th>IP</th><th>Device</th><th>Date</th>
+      <th>Audit ID</th><th>User</th><th>Role</th><th>Action</th><th>Module</th>
+      <th>Description</th><th>Date</th><th>Time</th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>

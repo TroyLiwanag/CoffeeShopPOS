@@ -6,6 +6,7 @@ import { menuImageUrl } from "@/lib/menu-api";
 import { MENU_ICON_OPTIONS, MenuIconDisplay, getIconForCategory } from "@/lib/menu-icons";
 import { cn } from "@/lib/utils";
 import { ProcessingOverlay, type ProcessingState } from "@/components/ProcessingOverlay";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,12 +45,14 @@ export function MenuFormModal({ open, item, categories, onClose, onSave }: Props
   const [removeImage, setRemoveImage] = useState(false);
   const [overlay, setOverlay] = useState<ProcessingState>("idle");
   const [dragOver, setDragOver] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const allCategories = [...new Set([...DEFAULT_CATEGORIES, ...categories])];
 
   useEffect(() => {
     if (!open) return;
+    setConfirmOpen(false);
     if (item) {
       const cat = item.category || "Coffee";
       setForm({
@@ -95,9 +98,13 @@ export function MenuFormModal({ open, item, categories, onClose, onSave }: Props
     pickFile(file || null);
   };
 
-  const submit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.category || form.price < 0) return;
+    setConfirmOpen(true);
+  };
+
+  const performSave = async () => {
     setOverlay("processing");
     try {
       await onSave(form, imageFile, removeImage);
@@ -117,18 +124,29 @@ export function MenuFormModal({ open, item, categories, onClose, onSave }: Props
   if (!open) return null;
 
   const modal = (
-    <div
-      className="fixed inset-0 z-70 flex items-center justify-center p-4 modal-backdrop animate-fade-in"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="product-form-modal-title"
-    >
-      <form
-        className="modal-panel relative w-full sm:max-w-lg max-h-[92dvh] flex flex-col animate-scale-in"
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={submit}
+    <>
+      <ConfirmActionModal
+        open={confirmOpen}
+        title={item ? "Save Menu Item" : "Create Menu Item"}
+        message={item ? `Are you sure you want to save changes to "${form.name}"?` : `Are you sure you want to add "${form.name}" to the menu?`}
+        detail={`Category: ${form.category} · Price: ₱${form.price.toFixed(2)}`}
+        confirmLabel={item ? "Save Item" : "Create Item"}
+        variant="primary"
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={performSave}
+      />
+      <div
+        className="fixed inset-0 z-70 flex items-center justify-center p-4 modal-backdrop animate-fade-in"
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="menu-modal-title"
       >
+        <form
+          className="modal-panel relative w-full max-w-lg max-h-[90dvh] flex flex-col animate-scale-in"
+          onClick={(e) => e.stopPropagation()}
+          onSubmit={handleSubmit}
+        >
         <ProcessingOverlay
           state={overlay}
           processingLabel={item ? "Saving changes…" : "Adding product…"}
@@ -338,6 +356,7 @@ export function MenuFormModal({ open, item, categories, onClose, onSave }: Props
         </div>
       </form>
     </div>
+    </>
   );
 
   return typeof document !== "undefined" ? createPortal(modal, document.body) : null;

@@ -183,7 +183,10 @@ fun ReceiptScreen(
                             // Totals & Discounts
                             val subtotal = items.sumOf { it.price * it.quantity }
                             val isExempt = order.discountType == "Senior" || order.discountType == "PWD"
-                            val discRate = if (order.discountRate > 0) order.discountRate else 20.0
+                            val vatRate = if (settings.vatRate > 0) settings.vatRate else 12.0
+                            val vatableSales = if (isExempt) 0.0 else if (settings.vatEnabled) order.totalAmount / (1.0 + vatRate / 100.0) else order.totalAmount
+                            val vatAmount = if (isExempt) 0.0 else if (settings.vatEnabled) order.totalAmount - vatableSales else 0.0
+                            val vatExemptSales = if (isExempt) Math.max(0.0, subtotal - order.promoDiscountAmount - order.discountAmount) else 0.0
 
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Subtotal", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
@@ -213,6 +216,39 @@ fun ReceiptScreen(
                                 Text("Total", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                                 Text("₱${String.format("%.2f", order.totalAmount)}", fontSize = 18.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                             }
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            // VAT Breakdown Section
+                            if (isExempt) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("VATable Sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                    Text("₱0.00", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("VAT Amount (${vatRate.toInt()}%)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                    Text("₱0.00", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("VAT Exempt Sales", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = EspressoPrimary, fontFamily = FontFamily.Monospace)
+                                    Text("₱${String.format("%.2f", vatExemptSales)}", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = EspressoPrimary, fontFamily = FontFamily.Monospace)
+                                }
+                            } else if (settings.vatEnabled) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("VATable Sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                    Text("₱${String.format("%.2f", vatableSales)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("VAT (${vatRate.toInt()}%)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                    Text("₱${String.format("%.2f", vatAmount)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("VAT Exempt Sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                    Text("₱0.00", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Payment (${order.paymentMethod})", fontSize = 12.sp, fontFamily = FontFamily.Monospace)

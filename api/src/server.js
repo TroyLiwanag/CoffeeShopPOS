@@ -18,6 +18,8 @@ import settingsRoutes from "./routes/settingsRoutes.js";
 import menuRoutes from "./routes/menuRoutes.js";
 import promoRoutes from "./routes/promoRoutes.js";
 import verificationCodeRoutes from "./routes/verificationCodeRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import recipeRoutes from "./routes/recipeRoutes.js";
 
 import fs from "fs";
 
@@ -110,6 +112,8 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/promos", promoRoutes);
 app.use("/api/verification-codes", verificationCodeRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/recipes", recipeRoutes);
 
 // Fallback for React SPA routing on non-API routes
 app.use((req, res, next) => {

@@ -25,6 +25,7 @@ import {
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PermissionGate } from "@/components/PermissionGate";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 import { withActionFeedback, withActionFeedbackSafe } from "@/lib/action-feedback";
 import { cn } from "@/lib/utils";
 import { fmt, formatOrderNumber } from "@/lib/pos-store";
@@ -92,6 +93,7 @@ function PromosScreen() {
   const [viewingPromo, setViewingPromo] = useState<Promo | null>(null);
   const [editingPromo, setEditingPromo] = useState<Promo | null>(null);
   const [deletingPromo, setDeletingPromo] = useState<Promo | null>(null);
+  const [createConfirmOpen, setCreateConfirmOpen] = useState(false);
 
   // Form State
   const [form, setForm] = useState({
@@ -168,7 +170,7 @@ function PromosScreen() {
     setEditorOpen(true);
   };
 
-  const savePromo = async (e: React.FormEvent) => {
+  const handleSavePromoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
@@ -194,6 +196,11 @@ function PromosScreen() {
       return;
     }
 
+    setCreateConfirmOpen(true);
+  };
+
+  const performSavePromo = async () => {
+    const val = Number(form.discount_value);
     try {
       if (editingPromo) {
         await withActionFeedback(
@@ -239,6 +246,8 @@ function PromosScreen() {
         );
       }
       setEditorOpen(false);
+      setEditingPromo(null);
+      setCreateConfirmOpen(false);
       await loadData();
     } catch (err: any) {
       const serverMessage = err?.response?.data?.message || err?.message || "Failed to save promo.";
@@ -645,7 +654,7 @@ function PromosScreen() {
                 </div>
               )}
 
-              <form onSubmit={savePromo} className="space-y-4">
+              <form onSubmit={handleSavePromoSubmit} className="space-y-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Promo Name *
@@ -914,6 +923,21 @@ function PromosScreen() {
           </div>,
           document.body,
         )}
+
+        <ConfirmActionModal
+          open={createConfirmOpen}
+          title={editingPromo ? "Save Promo Changes" : "Create Promo"}
+          message={
+            editingPromo
+              ? `Are you sure you want to save changes to promo "${form.promo_name}"?`
+              : `Are you sure you want to create promo "${form.promo_name}"?`
+          }
+          detail={`Discount: ${form.discount_value}${form.discount_type === "percentage" ? "%" : " PHP"} · Target: ${form.eligible_customer}`}
+          confirmLabel={editingPromo ? "Save Promo" : "Create Promo"}
+          variant="primary"
+          onClose={() => setCreateConfirmOpen(false)}
+          onConfirm={performSavePromo}
+        />
 
         {/* Modal 3: Confirm Delete Modal */}
         <ConfirmDeleteModal

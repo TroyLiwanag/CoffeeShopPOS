@@ -6,6 +6,7 @@ const router = Router();
 
 router.use(authenticate);
 router.get("/summary", requirePermission("canManageReports"), reportController.summary);
+router.get("/by-category", requirePermission("canManageReports"), reportController.byCategory);
 router.get("/", requirePermission("canManageReports"), reportController.listReports);
 router.post("/generate", requirePermission("canManageReports"), reportController.generate);
 router.post("/export-log", requirePermission("canManageReports"), reportController.logExport);

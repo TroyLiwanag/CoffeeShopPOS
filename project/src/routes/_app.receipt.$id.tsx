@@ -40,11 +40,31 @@ function ReceiptScreen() {
   const subtotalVal = Math.max(order.subtotal || 0, itemsSubtotal);
   const promoAmt = order.promoDiscountAmount || 0;
   const isExemptType = order.discount?.type === "Senior" || order.discount?.type === "PWD";
-  const calcExemptDiscount = Math.max(0, subtotalVal - order.total - promoAmt);
-  const discountAmt = (order.discountAmount && order.discountAmount > 0) ? order.discountAmount : calcExemptDiscount;
-  const isDiscountApplied = isExemptType || discountAmt > 0.01;
-  const discountLabelType = isExemptType ? order.discount.type : "Senior/PWD";
-  const discountRate = order.discountRate || (order.discount?.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate) || 20;
+  const calcExemptDiscount = isExemptType ? Math.max(0, subtotalVal - order.total - promoAmt) : 0;
+  const discountAmt = isExemptType ? ((order.discountAmount && order.discountAmount > 0) ? order.discountAmount : calcExemptDiscount) : 0;
+  const isDiscountApplied = isExemptType && discountAmt > 0.01;
+  const discountLabelType = isExemptType ? order.discount.type : "";
+  const discountRate = isExemptType ? (order.discountRate || (order.discount?.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate) || 20) : 0;
+
+  const vatRate = settings.vatRate || 12;
+  const vatEnabled = settings.vatEnabled !== false;
+  let vatableSalesVal = order.vatableSales ?? 0;
+  let vatAmountVal = order.vatAmount ?? 0;
+  let vatExemptSalesVal = order.vatExemptSales ?? 0;
+
+  if (isExemptType) {
+    vatableSalesVal = 0;
+    vatAmountVal = 0;
+    vatExemptSalesVal = (order.vatExemptSales && order.vatExemptSales > 0)
+      ? order.vatExemptSales
+      : Math.max(0, subtotalVal - promoAmt - discountAmt);
+  } else if (vatEnabled) {
+    const grossAfterPromo = Math.max(0, subtotalVal - promoAmt);
+    if (!vatableSalesVal && grossAfterPromo > 0) {
+      vatableSalesVal = grossAfterPromo / (1 + vatRate / 100);
+      vatAmountVal = grossAfterPromo - vatableSalesVal;
+    }
+  }
 
   const formattedDate = new Date(order.createdAt).toLocaleString([], {
     month: "numeric",
@@ -178,19 +198,26 @@ function ReceiptScreen() {
         </div>
 
         {/* Items List */}
-        <div className="border-t border-dashed border-gray-300 pt-3 space-y-2.5">
+        <div className="border-t border-dashed border-gray-300 pt-3 space-y-3">
           {order.items.map((i) => {
+            const basePrice = i.basePrice || i.unitPrice;
             const displayName = `${i.product.name}${i.size ? ` (${i.size.slice(0, 1).toUpperCase()})` : ""}`;
+            const addOnTotal = Array.isArray(i.addonsDetails)
+              ? i.addonsDetails.reduce((s, a) => s + (Number(a.price) || 0), 0)
+              : 0;
+            const itemTotal = i.itemTotal || (basePrice + addOnTotal) * i.qty;
+
             return (
-              <div key={i.id} className="space-y-0.5">
+              <div key={i.id} className="space-y-1 pb-2 border-b border-dashed border-gray-100 last:border-0 last:pb-0">
                 <div className="flex justify-between items-start text-sm">
-                  <span className="font-semibold text-foreground">{displayName}</span>
-                  <span className="font-bold">₱{(i.unitPrice * i.qty).toFixed(2)}</span>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {i.qty} x ₱{i.unitPrice.toFixed(2)}
+                  <span className="font-semibold text-foreground">{displayName} <span className="text-xs font-normal text-muted-foreground">x{i.qty}</span></span>
+                  <span className="font-mono text-xs text-muted-foreground">Base: ₱{(basePrice * i.qty).toFixed(2)}</span>
                 </div>
                 <ReceiptItemMeta item={i} />
+                <div className="flex justify-between items-center text-xs font-bold text-foreground pt-0.5">
+                  <span className="text-[11px] text-muted-foreground uppercase tracking-wide">Item Total</span>
+                  <span className="font-mono text-sm">₱{itemTotal.toFixed(2)}</span>
+                </div>
               </div>
             );
           })}
@@ -214,12 +241,61 @@ function ReceiptScreen() {
               <span>-{fmt(discountAmt)}</span>
             </div>
           )}
-          <div className="flex justify-between items-center text-base font-bold pt-1 border-t border-gray-100">
-            <span>Total</span>
+          {promoAmt > 0 && isDiscountApplied && discountAmt > 0.01 && (
+            <div className="flex justify-between text-xs font-semibold text-foreground border-t border-dashed border-gray-200 pt-1">
+              <span>Total Discount</span>
+              <span>-{fmt(promoAmt + discountAmt)}</span>
+            </div>
+          )}
+          <div className="flex justify-between items-center text-base font-bold pt-1 border-t border-gray-200">
+            <span>Grand Total</span>
             <span className="text-lg">₱{order.total.toFixed(2)}</span>
           </div>
+
+          {/* VAT Breakdown */}
+          <div className="pt-2 pb-1 border-t border-dashed border-gray-200 space-y-1 text-xs text-muted-foreground">
+            {isExemptType ? (
+              <>
+                <div className="flex justify-between">
+                  <span>VATable Sales</span>
+                  <span>₱0.00</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>VAT Amount ({vatRate}%)</span>
+                  <span>₱0.00</span>
+                </div>
+                <div className="flex justify-between font-medium text-foreground">
+                  <span>VAT Exempt Sales</span>
+                  <span>₱{vatExemptSalesVal.toFixed(2)}</span>
+                </div>
+              </>
+            ) : vatEnabled ? (
+              <>
+                <div className="flex justify-between">
+                  <span>VATable Sales</span>
+                  <span>₱{vatableSalesVal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>VAT ({vatRate}%)</span>
+                  <span>₱{vatAmountVal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>VAT Exempt Sales</span>
+                  <span>₱0.00</span>
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <div className="flex justify-between text-sm pt-1 border-t border-gray-200 font-medium">
+            <span>Payment Method</span>
+            <span className="font-semibold text-primary">
+              {order.paymentMethod || "Cash"}
+              {order.paymentReference ? ` (Ref: ${order.paymentReference})` : ""}
+            </span>
+          </div>
           <div className="flex justify-between text-sm">
-            <span>Cash</span>
+            <span>Amount Paid</span>
             <span>₱{(order.cashGiven ?? order.total).toFixed(2)}</span>
           </div>
           <div className="flex justify-between text-sm">
@@ -397,15 +473,30 @@ function ReceiptScreen() {
 
 function ReceiptItemMeta({ item }: { item: CartItem }) {
   const opts = [item.sugar, item.milk].filter(Boolean);
-  if (opts.length === 0 && item.addons.length === 0) return null;
+  const hasAddonsDetails = Array.isArray(item.addonsDetails) && item.addonsDetails.length > 0;
+
+  if (opts.length === 0 && !hasAddonsDetails && (!item.addons || item.addons.length === 0) && !item.notes) {
+    return null;
+  }
+
   return (
-    <>
-      {opts.length > 0 && (
-        <div className="text-xs text-muted-foreground">{opts.join(" · ")}</div>
-      )}
-      {item.addons.length > 0 && (
-        <div className="text-xs text-muted-foreground">+ {item.addons.join(", ")}</div>
-      )}
-    </>
+    <div className="space-y-0.5 text-xs text-muted-foreground my-1">
+      {opts.length > 0 && <div className="text-[11px]">Options: {opts.join(" · ")}</div>}
+      {hasAddonsDetails ? (
+        <div className="space-y-0.5 pt-0.5">
+          {item.addonsDetails!.map((ad, idx) => (
+            <div key={idx} className="flex justify-between items-center text-[11px] text-muted-foreground pl-2 border-l-2 border-primary/30">
+              <span>* {ad.name}</span>
+              <span className="font-mono text-foreground">+₱{(Number(ad.price || 0) * item.qty).toFixed(2)}</span>
+            </div>
+          ))}
+        </div>
+      ) : item.addons && item.addons.length > 0 ? (
+        <div className="pl-2 border-l-2 border-primary/30 text-[11px]">
+          * {item.addons.join(", ")}
+        </div>
+      ) : null}
+      {item.notes && <div className="italic text-[11px] text-amber-700 dark:text-amber-400">Note: {item.notes}</div>}
+    </div>
   );
 }

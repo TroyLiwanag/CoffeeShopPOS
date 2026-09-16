@@ -23,6 +23,7 @@ import { Route as AppOrdersRouteImport } from './routes/_app.orders'
 import { Route as AppMenuRouteImport } from './routes/_app.menu'
 import { Route as AppInventoryRouteImport } from './routes/_app.inventory'
 import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
+import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
 import { Route as AppReceiptIdRouteImport } from './routes/_app.receipt.$id'
@@ -96,6 +97,11 @@ const AppEmployeesRoute = AppEmployeesRouteImport.update({
   path: '/employees',
   getParentRoute: () => AppRoute,
 } as any)
+const AppDashboardRoute = AppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAuditRoute = AppAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/forgot-password': typeof ForgotPasswordRoute
   '/attendance': typeof AppAttendanceRoute
   '/audit': typeof AppAuditRoute
+  '/dashboard': typeof AppDashboardRoute
   '/employees': typeof AppEmployeesRoute
   '/inventory': typeof AppInventoryRoute
   '/menu': typeof AppMenuRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByTo {
   '/forgot-password': typeof ForgotPasswordRoute
   '/attendance': typeof AppAttendanceRoute
   '/audit': typeof AppAuditRoute
+  '/dashboard': typeof AppDashboardRoute
   '/employees': typeof AppEmployeesRoute
   '/inventory': typeof AppInventoryRoute
   '/menu': typeof AppMenuRoute
@@ -155,6 +163,7 @@ export interface FileRoutesById {
   '/forgot-password': typeof ForgotPasswordRoute
   '/_app/attendance': typeof AppAttendanceRoute
   '/_app/audit': typeof AppAuditRoute
+  '/_app/dashboard': typeof AppDashboardRoute
   '/_app/employees': typeof AppEmployeesRoute
   '/_app/inventory': typeof AppInventoryRoute
   '/_app/menu': typeof AppMenuRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/attendance'
     | '/audit'
+    | '/dashboard'
     | '/employees'
     | '/inventory'
     | '/menu'
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/attendance'
     | '/audit'
+    | '/dashboard'
     | '/employees'
     | '/inventory'
     | '/menu'
@@ -212,6 +223,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/_app/attendance'
     | '/_app/audit'
+    | '/_app/dashboard'
     | '/_app/employees'
     | '/_app/inventory'
     | '/_app/menu'
@@ -332,6 +344,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEmployeesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/dashboard': {
+      id: '/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/audit': {
       id: '/_app/audit'
       path: '/audit'
@@ -359,6 +378,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAttendanceRoute: typeof AppAttendanceRoute
   AppAuditRoute: typeof AppAuditRoute
+  AppDashboardRoute: typeof AppDashboardRoute
   AppEmployeesRoute: typeof AppEmployeesRoute
   AppInventoryRoute: typeof AppInventoryRoute
   AppMenuRoute: typeof AppMenuRoute
@@ -376,6 +396,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAttendanceRoute: AppAttendanceRoute,
   AppAuditRoute: AppAuditRoute,
+  AppDashboardRoute: AppDashboardRoute,
   AppEmployeesRoute: AppEmployeesRoute,
   AppInventoryRoute: AppInventoryRoute,
   AppMenuRoute: AppMenuRoute,

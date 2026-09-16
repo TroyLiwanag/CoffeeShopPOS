@@ -5,12 +5,13 @@ import { fetchMenuItems, type MenuItem } from "@/lib/menu-api";
 import { toast } from "sonner";
 import {
   Home, Package, BarChart3, Users, Settings, LogOut, Receipt,
-  Wallet, FileSearch, Menu, Coffee, X, Clock, Tag, KeyRound, Bell, AlertTriangle,
+  Wallet, FileSearch, Menu, Coffee, X, Clock, Tag, KeyRound, Bell, AlertTriangle, LayoutDashboard,
 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import { FullScreenLoader } from "@/components/Loader";
 import { BackButton } from "@/components/layout/BackButton";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 import { withActionFeedbackSafe } from "@/lib/action-feedback";
 import { useDeliveryLock } from "@/lib/delivery-lock-context";
 import { hasPermission } from "@/lib/permissions";
@@ -26,6 +27,7 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, permission: "canViewDashboard" },
   { to: "/pos", label: "POS", icon: Home, permission: "canViewDashboard" },
   { to: "/orders", label: "Orders", icon: Receipt, permission: "canManageOrders" },
   { to: "/menu", label: "Product", icon: Coffee, permission: "canManageMenu" },
@@ -276,18 +278,16 @@ export function AppShell() {
       </nav>
       <div className="p-3 border-t border-white/10 safe-bottom">
         <div className="px-4 py-2 text-xs opacity-70 truncate">{user.fullname}</div>
-        {user.role === "staff" && (
-          <button
-            type="button"
-            onClick={() => {
-              setNavOpen(false);
-              setLogoutConfirmOpen(true);
-            }}
-            className="w-full flex items-center gap-3 px-4 py-3.5 min-h-[48px] rounded-xl text-sm font-medium text-red-300 hover:bg-red-500/20 hover:text-red-200 transition-colors touch-manipulation"
-          >
-            <LogOut className="w-5 h-5 shrink-0" /> Logout
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => {
+            setNavOpen(false);
+            setLogoutConfirmOpen(true);
+          }}
+          className="w-full flex items-center gap-3 px-4 py-3.5 min-h-[48px] rounded-xl text-sm font-medium text-red-300 hover:bg-red-500/20 hover:text-red-200 transition-colors touch-manipulation"
+        >
+          <LogOut className="w-5 h-5 shrink-0" /> Logout
+        </button>
       </div>
     </>
   );
@@ -513,12 +513,13 @@ export function AppShell() {
         </main>
       </div>
 
-      <ConfirmDeleteModal
+      <ConfirmActionModal
         open={logoutConfirmOpen}
-        title="Log out"
-        message="Are you sure???"
-        detail="You will need to sign in again to use the app."
-        confirmLabel="Log out"
+        title="Confirm Logout"
+        message="Are you sure you want to log out?"
+        detail="You will need to sign back in with your credentials."
+        confirmLabel="Log Out"
+        variant="destructive"
         onClose={() => setLogoutConfirmOpen(false)}
         onConfirm={async () => {
           await withActionFeedbackSafe(

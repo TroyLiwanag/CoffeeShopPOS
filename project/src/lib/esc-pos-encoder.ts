@@ -126,7 +126,12 @@ export function generateEscPosReceipt(order: Order, settings: Settings, logoByte
 
   // 4. Items List (32 columns max for 58mm thermal paper)
   order.items.forEach((i) => {
-    const itemTotalStr = `P${(i.unitPrice * i.qty).toFixed(2)}`;
+    const basePrice = i.basePrice || i.unitPrice;
+    const addOnTotal = Array.isArray(i.addonsDetails)
+      ? i.addonsDetails.reduce((s, a) => s + (Number(a.price) || 0), 0)
+      : 0;
+    const itemTotalVal = i.itemTotal || (basePrice + addOnTotal) * i.qty;
+    const itemTotalStr = `P${itemTotalVal.toFixed(2)}`;
     const name = `${i.product.name}${i.size ? ` (${i.size.slice(0, 1).toUpperCase()})` : ""}`;
 
     const maxNameLen = 32 - itemTotalStr.length - 1;
@@ -134,11 +139,21 @@ export function generateEscPosReceipt(order: Order, settings: Settings, logoByte
     const padding = Math.max(1, 32 - trimmedName.length - itemTotalStr.length);
 
     writeStr(trimmedName + " ".repeat(padding) + itemTotalStr + "\n");
-    writeStr(`  ${i.qty} x P${i.unitPrice.toFixed(2)}\n`);
+    writeStr(`  ${i.qty} x P${basePrice.toFixed(2)}\n`);
 
     const opts = [i.sugar, i.milk].filter(Boolean);
     if (opts.length > 0) writeStr(`  (${opts.join(", ")})\n`);
-    if (i.addons.length > 0) writeStr(`  + ${i.addons.join(", ")}\n`);
+
+    if (Array.isArray(i.addonsDetails) && i.addonsDetails.length > 0) {
+      i.addonsDetails.forEach((ad) => {
+        const adStr = `+P${(Number(ad.price || 0) * i.qty).toFixed(2)}`;
+        const adName = `  * ${ad.name}`;
+        const adPad = Math.max(1, 32 - adName.length - adStr.length);
+        writeStr(adName + " ".repeat(adPad) + adStr + "\n");
+      });
+    } else if (i.addons && i.addons.length > 0) {
+      writeStr(`  * ${i.addons.join(", ")}\n`);
+    }
   });
 
   writeStr(separator);
@@ -166,21 +181,60 @@ export function generateEscPosReceipt(order: Order, settings: Settings, logoByte
   }
 
   const isExemptType = order.discount?.type === "Senior" || order.discount?.type === "PWD";
-  const calcExemptDiscount = Math.max(0, subtotalVal - order.total - promoAmt);
-  const discountAmt = (order.discountAmount && order.discountAmount > 0) ? order.discountAmount : calcExemptDiscount;
+  const calcExemptDiscount = isExemptType ? Math.max(0, subtotalVal - order.total - promoAmt) : 0;
+  const discountAmt = isExemptType ? ((order.discountAmount && order.discountAmount > 0) ? order.discountAmount : calcExemptDiscount) : 0;
 
-  const isDiscountApplied = isExemptType || discountAmt > 0.01;
-  const discountLabelType = isExemptType ? order.discount.type : "Senior/PWD";
-  const discountRate = order.discountRate || (order.discount?.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate) || 20;
+  const isDiscountApplied = isExemptType && discountAmt > 0.01;
+  const discountLabelType = isExemptType ? order.discount.type : "";
+  const discountRate = isExemptType ? (order.discountRate || (order.discount?.type === "Senior" ? settings.seniorDiscountRate : settings.pwdDiscountRate) || 20) : 0;
 
   if (isDiscountApplied && discountAmt > 0.01) {
     writeRow(`${discountLabelType} Disc (${discountRate}%):`, `-P${discountAmt.toFixed(2)}`);
   }
 
+  if (promoAmt > 0 && isDiscountApplied && discountAmt > 0.01) {
+    writeRow("Total Discount:", `-P${(promoAmt + discountAmt).toFixed(2)}`);
+  }
+
   bytes.push(0x1b, 0x45, 0x01); // Bold ON
-  writeRow("TOTAL:", `P${order.total.toFixed(2)}`);
+  writeRow("GRAND TOTAL:", `P${order.total.toFixed(2)}`);
   bytes.push(0x1b, 0x45, 0x00); // Bold OFF
-  writeRow("Cash:", `P${(order.cashGiven ?? order.total).toFixed(2)}`);
+
+  // VAT breakdown calculation
+  const vatRate = settings.vatRate || 12;
+  const vatEnabled = settings.vatEnabled !== false;
+  let vatableVal = order.vatableSales ?? 0;
+  let vatAmtVal = order.vatAmount ?? 0;
+  let vatExemptVal = order.vatExemptSales ?? 0;
+
+  if (isExemptType) {
+    vatableVal = 0;
+    vatAmtVal = 0;
+    vatExemptVal = (order.vatExemptSales && order.vatExemptSales > 0)
+      ? order.vatExemptSales
+      : Math.max(0, subtotalVal - promoAmt - discountAmt);
+  } else if (vatEnabled) {
+    const grossAfterPromo = Math.max(0, subtotalVal - promoAmt);
+    if (!vatableVal && grossAfterPromo > 0) {
+      vatableVal = grossAfterPromo / (1 + vatRate / 100);
+      vatAmtVal = grossAfterPromo - vatableVal;
+    }
+  }
+
+  if (isExemptType) {
+    writeRow("VATable Sales:", "P0.00");
+    writeRow(`VAT Amount (${vatRate}%):`, "P0.00");
+    writeRow("VAT Exempt Sales:", `P${vatExemptVal.toFixed(2)}`);
+  } else if (vatEnabled) {
+    writeRow("VATable Sales:", `P${vatableVal.toFixed(2)}`);
+    writeRow(`VAT Amount (${vatRate}%):`, `P${vatAmtVal.toFixed(2)}`);
+    writeRow("VAT Exempt Sales:", "P0.00");
+  }
+
+  const payMethodStr = order.paymentMethod || "Cash";
+  const payRefStr = order.paymentReference ? ` (Ref: ${order.paymentReference})` : "";
+  writeRow("Payment Method:", payMethodStr + payRefStr);
+  writeRow("Amount Paid:", `P${(order.cashGiven ?? order.total).toFixed(2)}`);
   const change = order.cashGiven ? Math.max(0, order.cashGiven - order.total) : 0;
   writeRow("Change:", `P${change.toFixed(2)}`);
 

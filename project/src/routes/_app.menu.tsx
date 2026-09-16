@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Search, Pencil, Trash2, Coffee } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Coffee, ChefHat } from "lucide-react";
 import { PermissionGate } from "@/components/PermissionGate";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { MenuFormModal } from "@/components/menu/MenuFormModal";
+import { RecipeModal } from "@/components/RecipeModal";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
 import { MenuItemVisual } from "@/components/menu/MenuItemVisual";
 import {
@@ -33,6 +34,7 @@ function MenuManagementScreen() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MenuItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MenuItem | null>(null);
+  const [recipeTarget, setRecipeTarget] = useState<MenuItem | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -200,14 +202,22 @@ function MenuManagementScreen() {
                     <div className="font-medium text-sm line-clamp-2 mt-0.5">{item.name}</div>
                     <div className="text-accent font-semibold mt-1">{fmt(item.price)}</div>
                     <div className="text-xs text-muted-foreground mt-1">Stock: {item.stock}</div>
-                    <div className="flex gap-2 mt-3 pt-2 border-t">
+                    <div className="flex gap-1.5 mt-3 pt-2 border-t">
+                      <button
+                        type="button"
+                        onClick={() => setRecipeTarget(item)}
+                        className="px-2.5 py-2 min-h-[40px] rounded-lg border border-accent/40 bg-accent/10 hover:bg-accent/20 text-accent text-xs font-medium flex items-center justify-center gap-1 touch-manipulation transition"
+                        title="Manage Recipe Ingredients"
+                      >
+                        <ChefHat className="w-3.5 h-3.5" /> Recipe
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
                           setEditing(item);
                           setModalOpen(true);
                         }}
-                        className="flex-1 py-2 min-h-[40px] rounded-lg border text-sm hover:bg-muted flex items-center justify-center gap-1 touch-manipulation"
+                        className="flex-1 py-2 min-h-[40px] rounded-lg border text-xs hover:bg-muted flex items-center justify-center gap-1 touch-manipulation"
                       >
                         <Pencil className="w-3.5 h-3.5" /> Edit
                       </button>
@@ -245,6 +255,17 @@ function MenuManagementScreen() {
           }}
           onSave={handleSave}
         />
+
+        {recipeTarget && (
+          <RecipeModal
+            open={recipeTarget !== null}
+            itemType="menu"
+            itemId={String(recipeTarget.id)}
+            itemName={recipeTarget.name}
+            onClose={() => setRecipeTarget(null)}
+            onSaved={load}
+          />
+        )}
       </PageContainer>
     </PermissionGate>
   );

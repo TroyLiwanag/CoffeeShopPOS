@@ -13,6 +13,7 @@ import {
 import { FileSearch, Download, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { withActionFeedbackSafe } from "@/lib/action-feedback";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 
 export const Route = createFileRoute("/_app/audit")({
   component: AuditScreen,
@@ -36,6 +37,9 @@ function AuditScreen() {
   const [dateTo, setDateTo] = useState("");
   const [modules, setModules] = useState<string[]>([]);
   const [users, setUsers] = useState<{ id: number | null; name: string }[]>([]);
+
+  const [pdfConfirmOpen, setPdfConfirmOpen] = useState(false);
+  const [csvConfirmOpen, setCsvConfirmOpen] = useState(false);
 
   const isAdmin = user?.role === "admin";
 
@@ -102,32 +106,52 @@ function AuditScreen() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() =>
-              withActionFeedbackSafe(() => downloadAuditCsv(filters), {
-                loading: "Exporting CSV…",
-                success: "Audit log exported!",
-                error: "Export failed.",
-              })
-            }
+            onClick={() => setCsvConfirmOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-lg bg-primary text-primary-foreground text-sm hover:opacity-90 touch-manipulation"
           >
             <Download className="w-4 h-4" /> Export CSV
           </button>
           <button
             type="button"
-            onClick={() =>
-              withActionFeedbackSafe(() => openAuditPdf(filters), {
-                loading: "Generating PDF…",
-                success: "PDF ready!",
-                error: "PDF export failed.",
-              })
-            }
+            onClick={() => setPdfConfirmOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-lg border bg-card text-sm hover:bg-muted touch-manipulation"
           >
             <FileText className="w-4 h-4" /> Export PDF
           </button>
         </div>
       </div>
+
+      <ConfirmActionModal
+        open={csvConfirmOpen}
+        title="Export Audit CSV"
+        message="Are you sure you want to export the audit log in CSV format?"
+        confirmLabel="Export CSV"
+        variant="primary"
+        onClose={() => setCsvConfirmOpen(false)}
+        onConfirm={async () => {
+          await withActionFeedbackSafe(() => downloadAuditCsv(filters), {
+            loading: "Exporting CSV…",
+            success: "Audit log exported!",
+            error: "Export failed.",
+          });
+        }}
+      />
+
+      <ConfirmActionModal
+        open={pdfConfirmOpen}
+        title="Export Audit PDF"
+        message="Are you sure you want to generate and export this Audit Log PDF report?"
+        confirmLabel="Export PDF"
+        variant="accent"
+        onClose={() => setPdfConfirmOpen(false)}
+        onConfirm={async () => {
+          await withActionFeedbackSafe(() => openAuditPdf(filters), {
+            loading: "Generating PDF…",
+            success: "PDF ready!",
+            error: "PDF export failed.",
+          });
+        }}
+      />
 
       {error && (
         <div className="mb-4 p-4 rounded-lg border border-destructive/40 bg-destructive/10 text-sm text-destructive">
@@ -203,6 +227,7 @@ function AuditScreen() {
           <table className="w-full min-w-[800px]">
             <thead className="bg-muted">
               <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3">Audit ID</th>
                 <th className="px-4 py-3">User</th>
                 <th className="px-4 py-3">Action</th>
                 <th className="px-4 py-3">Module</th>
@@ -215,7 +240,7 @@ function AuditScreen() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
                     Loading audit logs…
                   </td>
                 </tr>
@@ -223,6 +248,7 @@ function AuditScreen() {
               {!loading &&
                 logs.map((a) => (
                   <tr key={a.id} className="border-t hover:bg-muted/30">
+                    <td className="px-4 py-3 text-xs font-mono font-bold text-accent">{a.userId || a.id || 1}</td>
                     <td className="px-4 py-3 text-sm font-medium whitespace-nowrap">{a.userName}</td>
                     <td className="px-4 py-3 text-sm">{a.actionType}</td>
                     <td className="px-4 py-3 text-sm">
@@ -244,7 +270,7 @@ function AuditScreen() {
                 ))}
               {!loading && logs.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No audit entries match your filters.
                   </td>
                 </tr>

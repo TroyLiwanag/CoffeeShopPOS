@@ -499,6 +499,205 @@ export async function ensureInventoryItemsTable() {
   }
 }
 
+export async function ensureProductIngredientsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_ingredients (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      menu_item_id BIGINT NULL,
+      product_id BIGINT NULL,
+      ingredient_id VARCHAR(100) NOT NULL,
+      quantity_used DECIMAL(10,3) NOT NULL DEFAULT 1.000,
+      unit VARCHAR(50) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_pi_menu (menu_item_id),
+      INDEX idx_pi_product (product_id),
+      INDEX idx_pi_ingredient (ingredient_id)
+    )
+  `);
+}
+
+export async function ensureInventoryMovementsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inventory_movements (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      ingredient_id VARCHAR(100) NOT NULL,
+      movement_type ENUM('RESTOCK', 'SALE_DEDUCTION', 'MANUAL_ADJUSTMENT', 'WASTE', 'RETURN', 'CORRECTION') NOT NULL,
+      quantity DECIMAL(10,3) NOT NULL,
+      previous_stock DECIMAL(10,3) NOT NULL,
+      new_stock DECIMAL(10,3) NOT NULL,
+      order_id BIGINT NULL,
+      user_id BIGINT NULL,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_im_ingredient (ingredient_id),
+      INDEX idx_im_movement_type (movement_type),
+      INDEX idx_im_created_at (created_at)
+    )
+  `);
+}
+
+export async function ensureInventoryItemsStatusColumn() {
+  try {
+    await pool.query(`ALTER TABLE inventory_items ADD COLUMN status VARCHAR(20) DEFAULT 'active' AFTER batch_no`);
+  } catch (err) {
+    if (err.code !== "ER_DUP_FIELDNAME") throw err;
+  }
+}
+
+export async function ensureInventoryItemsManufacturedDateColumn() {
+  try {
+    await pool.query(`ALTER TABLE inventory_items ADD COLUMN manufactured_date DATE NULL AFTER status`);
+  } catch (err) {
+    if (err.code !== "ER_DUP_FIELDNAME") throw err;
+  }
+}
+
+export async function seedSampleRecipes() {
+  const [existing] = await pool.query("SELECT id FROM product_ingredients LIMIT 1");
+  if (existing.length === 0) {
+    // Get sample menu items and inventory items
+    const [menu] = await pool.query("SELECT id, name FROM menu_items");
+    const [ing] = await pool.query("SELECT id, name FROM inventory_items");
+
+    if (menu.length > 0 && ing.length > 0) {
+      const ingMap = {};
+      ing.forEach((i) => {
+        ingMap[i.name.toLowerCase()] = i.id;
+      });
+
+      const coffeeBeansId = ingMap["coffee beans"] || "i1";
+      const milkId = ingMap["whole milk"] || "i2";
+      const sugarId = ingMap["sugar"] || "i5";
+      const chocoId = ingMap["chocolate syrup"] || "i6";
+      const matchaId = ingMap["matcha powder"] || "i7";
+
+      for (const m of menu) {
+        const nameLower = m.name.toLowerCase();
+        if (nameLower.includes("latte") || nameLower.includes("cappuccino") || nameLower.includes("americano") || nameLower.includes("v60")) {
+          await pool.query(
+            `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 18.000, 'g')`,
+            [m.id, coffeeBeansId],
+          );
+          if (nameLower.includes("latte") || nameLower.includes("cappuccino")) {
+            await pool.query(
+              `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 150.000, 'ml')`,
+              [m.id, milkId],
+            );
+          }
+          await pool.query(
+            `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 10.000, 'g')`,
+            [m.id, sugarId],
+          );
+        } else if (nameLower.includes("choco")) {
+          await pool.query(
+            `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 30.000, 'ml')`,
+            [m.id, chocoId],
+          );
+          await pool.query(
+            `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 180.000, 'ml')`,
+            [m.id, milkId],
+          );
+        } else if (nameLower.includes("matcha")) {
+          await pool.query(
+            `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 15.000, 'g')`,
+            [m.id, matchaId],
+          );
+          await pool.query(
+            `INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 150.000, 'ml')`,
+            [m.id, milkId],
+          );
+        }
+      }
+      console.log("Sample product recipes seeded successfully.");
+    }
+  }
+}
+
+export async function ensurePackagingInventoryAndRecipes() {
+  const packaging = [
+    { id: "pkg_cup", name: "Plastic Cups", stock: 500, min: 50, unit: "pcs", category: "Ingredient" },
+    { id: "pkg_straw", name: "Plastic Straws", stock: 500, min: 50, unit: "pcs", category: "Ingredient" },
+    { id: "pkg_hotcup", name: "Hot Paper Coffee Cups", stock: 500, min: 50, unit: "pcs", category: "Ingredient" },
+  ];
+
+  for (const item of packaging) {
+    const [exist] = await pool.query("SELECT id FROM inventory_items WHERE id = ? OR name = ?", [item.id, item.name]);
+    if (exist.length === 0) {
+      await pool.query(
+        `INSERT INTO inventory_items (id, name, stock, min, unit, category) VALUES (?, ?, ?, ?, ?, ?)`,
+        [item.id, item.name, item.stock, item.min, item.unit, item.category],
+      );
+      console.log(`Seeded packaging inventory item: ${item.name}`);
+    }
+  }
+
+  // Fetch inventory IDs for Plastic Cups, Plastic Straws, Hot Paper Coffee Cups
+  const [cups] = await pool.query("SELECT id, name FROM inventory_items WHERE name IN ('Plastic Cups', 'Plastic Straws', 'Hot Paper Coffee Cups')");
+  const cupMap = {};
+  cups.forEach((c) => {
+    cupMap[c.name] = String(c.id);
+  });
+
+  const plasticCupId = cupMap["Plastic Cups"];
+  const plasticStrawId = cupMap["Plastic Straws"];
+  const hotPaperCupId = cupMap["Hot Paper Coffee Cups"];
+
+  if (!plasticCupId || !plasticStrawId || !hotPaperCupId) return;
+
+  // Assign packaging items to menu_items
+  const [menuItems] = await pool.query("SELECT id, name, category FROM menu_items");
+  for (const m of menuItems) {
+    const nameLower = (m.name || "").toLowerCase();
+    const catLower = (m.category || "").toLowerCase();
+
+    const isIced = catLower.includes("iced") || catLower.includes("cold") || nameLower.includes("iced") || nameLower.includes("frappe") || nameLower.includes("blended") || nameLower.includes("oreo") || nameLower.includes("strawberry");
+    const isHot = nameLower.includes("hot") || nameLower.includes("v60");
+
+    if (isIced) {
+      const [exCup] = await pool.query("SELECT id FROM product_ingredients WHERE menu_item_id = ? AND ingredient_id = ?", [m.id, plasticCupId]);
+      if (exCup.length === 0) {
+        await pool.query("INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 1.000, 'pcs')", [m.id, plasticCupId]);
+      }
+      const [exStraw] = await pool.query("SELECT id FROM product_ingredients WHERE menu_item_id = ? AND ingredient_id = ?", [m.id, plasticStrawId]);
+      if (exStraw.length === 0) {
+        await pool.query("INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 1.000, 'pcs')", [m.id, plasticStrawId]);
+      }
+    } else if (isHot) {
+      const [exHot] = await pool.query("SELECT id FROM product_ingredients WHERE menu_item_id = ? AND ingredient_id = ?", [m.id, hotPaperCupId]);
+      if (exHot.length === 0) {
+        await pool.query("INSERT INTO product_ingredients (menu_item_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 1.000, 'pcs')", [m.id, hotPaperCupId]);
+      }
+    }
+  }
+
+  // Assign packaging items to products
+  const [products] = await pool.query("SELECT id, name, category FROM products");
+  for (const p of products) {
+    const nameLower = (p.name || "").toLowerCase();
+    const catLower = (p.category || "").toLowerCase();
+
+    const isIced = catLower.includes("iced") || catLower.includes("cold") || nameLower.includes("iced") || nameLower.includes("frappe") || nameLower.includes("blended");
+    const isHot = nameLower.includes("hot") || nameLower.includes("v60");
+
+    if (isIced) {
+      const [exCup] = await pool.query("SELECT id FROM product_ingredients WHERE product_id = ? AND ingredient_id = ?", [p.id, plasticCupId]);
+      if (exCup.length === 0) {
+        await pool.query("INSERT INTO product_ingredients (product_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 1.000, 'pcs')", [p.id, plasticCupId]);
+      }
+      const [exStraw] = await pool.query("SELECT id FROM product_ingredients WHERE product_id = ? AND ingredient_id = ?", [p.id, plasticStrawId]);
+      if (exStraw.length === 0) {
+        await pool.query("INSERT INTO product_ingredients (product_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 1.000, 'pcs')", [p.id, plasticStrawId]);
+      }
+    } else if (isHot) {
+      const [exHot] = await pool.query("SELECT id FROM product_ingredients WHERE product_id = ? AND ingredient_id = ?", [p.id, hotPaperCupId]);
+      if (exHot.length === 0) {
+        await pool.query("INSERT INTO product_ingredients (product_id, ingredient_id, quantity_used, unit) VALUES (?, ?, 1.000, 'pcs')", [p.id, hotPaperCupId]);
+      }
+    }
+  }
+}
+
 export async function seedDatabase() {
   await ensureUsersTable();
   await ensureEmployeePermissionsTable();
@@ -522,7 +721,13 @@ export async function seedDatabase() {
   await ensureOrderItemsMenuColumn();
   await ensurePasswordResetTable();
   await ensurePasswordResetColumns();
+  await ensureProductIngredientsTable();
+  await ensureInventoryMovementsTable();
+  await ensureInventoryItemsStatusColumn();
+  await ensureInventoryItemsManufacturedDateColumn();
   await seedSamplePromo();
+  await seedSampleRecipes();
+  await ensurePackagingInventoryAndRecipes();
 
   const [users] = await pool.query("SELECT id FROM users WHERE email = ?", [
     "admin@gmail.com",

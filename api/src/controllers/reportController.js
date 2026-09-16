@@ -335,3 +335,78 @@ export async function logExport(req, res) {
   );
   res.json({ success: true });
 }
+
+export async function byCategory(req, res) {
+  const { range = "All-Time", category } = req.query;
+
+  let dateWhereSql = "";
+  const rangeParam = String(range || "").trim().toLowerCase();
+  if (rangeParam === "daily" || rangeParam === "today") {
+    dateWhereSql = "AND o.created_at >= CURDATE()";
+  } else if (rangeParam === "weekly" || rangeParam === "week") {
+    dateWhereSql = "AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)";
+  } else if (rangeParam === "monthly" || rangeParam === "month") {
+    dateWhereSql = "AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
+  } else if (rangeParam === "quarterly") {
+    dateWhereSql = "AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)";
+  } else if (rangeParam === "yearly" || rangeParam === "year") {
+    dateWhereSql = "AND YEAR(o.created_at) = YEAR(CURDATE())";
+  }
+
+  let categoryWhereSql = "";
+  const params = [];
+  if (category && category !== "all" && category.trim()) {
+    categoryWhereSql = "AND (m.category = ? OR p.category = ?)";
+    params.push(category.trim(), category.trim());
+  }
+
+  const [rows] = await pool.query(
+    `SELECT COALESCE(m.category, p.category, 'Coffee') AS category,
+            COALESCE(m.name, p.name, 'Unknown Product') AS product_name,
+            SUM(oi.quantity) AS qty_sold,
+            SUM(COALESCE(oi.item_total, oi.quantity * oi.price)) AS sales_amount
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id AND o.order_status = 'completed'
+     LEFT JOIN menu_items m ON m.id = oi.menu_item_id
+     LEFT JOIN products p ON p.id = oi.product_id
+     WHERE 1=1 ${dateWhereSql} ${categoryWhereSql}
+     GROUP BY COALESCE(m.category, p.category, 'Coffee'), COALESCE(m.name, p.name, 'Unknown Product')
+     ORDER BY category ASC, qty_sold DESC, sales_amount DESC`,
+    params,
+  );
+
+  // Group items by category and add ranking
+  const grouped = {};
+  for (const r of rows) {
+    const cat = r.category || "Coffee";
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push({
+      productName: r.product_name,
+      qtySold: Number(r.qty_sold) || 0,
+      salesAmount: Number(r.sales_amount) || 0,
+    });
+  }
+
+  const categoryAnalysis = Object.keys(grouped).map((catName) => {
+    const items = grouped[catName].map((item, index) => ({
+      rank: index + 1,
+      ...item,
+    }));
+    const totalQty = items.reduce((s, i) => s + i.qtySold, 0);
+    const totalSales = items.reduce((s, i) => s + i.salesAmount, 0);
+    return {
+      category: catName,
+      totalQty,
+      totalSales,
+      topSeller: items[0] ? items[0].productName : "N/A",
+      items,
+    };
+  });
+
+  res.json({
+    range,
+    categoryFilter: category || "all",
+    categories: categoryAnalysis,
+  });
+}
+

@@ -4,6 +4,7 @@ import { fetchMenuItems, type MenuItem as ApiMenuItem } from "@/lib/menu-api";
 import type { Promo } from "@/lib/promo-api";
 import type { Permissions } from "@/lib/permissions";
 import { extractErrorMessage } from "@/lib/action-feedback";
+import { calculateOrderTotals, type AddonItem } from "@/lib/pricing";
 
 export type Role = "staff" | "admin";
 
@@ -76,8 +77,11 @@ export interface CartItem {
   sugar: string;
   milk: string;
   addons: string[];
+  addonsDetails?: AddonItem[];
+  basePrice?: number;
   notes: string;
   unitPrice: number;
+  itemTotal?: number;
 }
 
 export type DiscountType = "None" | "Senior" | "PWD";
@@ -98,6 +102,8 @@ export interface Ingredient {
   unit: string;
   category: StockCategory;
   batchNo?: string | null;
+  manufacturedDate?: string | null;
+  status?: "active" | "archived";
 }
 
 export type ExpirationStatus =
@@ -161,7 +167,15 @@ export interface Order {
   /** Discount percent applied (Senior/PWD) at time of sale */
   discountRate: number;
   cashGiven?: number;
+  paymentMethod?: string;
+  paymentReference?: string;
   orderType?: string;
+  orderStatus?: "pending" | "completed" | "cancelled" | "voided";
+  paymentStatus?: "paid" | "pending" | "cancelled" | "voided";
+  voidedBy?: string;
+  voidedByName?: string;
+  voidedAt?: string;
+  voidReason?: string;
 }
 
 export interface AuditEntry {
@@ -268,6 +282,7 @@ const INITIAL_INGREDIENTS: Ingredient[] = [
   { id: "u3u", name: "Spoons", stock: 60, min: 30, unit: "pcs", category: "Utensil" },
   { id: "u4u", name: "Forks", stock: 60, min: 30, unit: "pcs", category: "Utensil" },
   { id: "u5u", name: "Serving Trays", stock: 12, min: 8, unit: "pcs", category: "Utensil" },
+  { id: "u6u", name: "Straws", stock: 200, min: 50, unit: "pcs", category: "Utensil", batchNo: "BATCH-STRAWS-001" },
 ];
 
 export interface Settings {
@@ -288,6 +303,8 @@ export interface Settings {
   printerAddress?: string;
   printerPaperWidth?: "58mm" | "80mm";
   printerConnectionType?: "Bluetooth" | "USB" | "Network";
+  paymongoPublicKey?: string;
+  paymongoSecretKey?: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -308,6 +325,8 @@ const DEFAULT_SETTINGS: Settings = {
   printerAddress: "86:67:7A:00:4C:9D",
   printerPaperWidth: "58mm",
   printerConnectionType: "Bluetooth",
+  paymongoPublicKey: "",
+  paymongoSecretKey: "",
 };
 
 export function mergeSettings(base: Settings, incoming?: Partial<Settings> | null): Settings {
@@ -330,6 +349,8 @@ export function mergeSettings(base: Settings, incoming?: Partial<Settings> | nul
     printerAddress: incoming.printerAddress ?? base.printerAddress,
     printerPaperWidth: incoming.printerPaperWidth ?? base.printerPaperWidth,
     printerConnectionType: incoming.printerConnectionType ?? base.printerConnectionType,
+    paymongoPublicKey: incoming.paymongoPublicKey ?? base.paymongoPublicKey,
+    paymongoSecretKey: incoming.paymongoSecretKey ?? base.paymongoSecretKey,
   };
 }
 
@@ -347,6 +368,7 @@ interface Ctx {
 
   cart: CartItem[];
   addToCart: (item: CartItem) => void;
+  updateCartItem: (id: string, item: CartItem) => void;
   removeFromCart: (id: string) => void;
   updateQty: (id: string, delta: number) => void;
   clearCart: () => void;
@@ -367,9 +389,14 @@ interface Ctx {
   cartTotal: number;
 
   ingredients: Ingredient[];
+  refreshIngredients: () => Promise<void>;
   updateIngredient: (id: string, updates: number | Partial<Ingredient>) => void;
   addIngredient: (i: Omit<Ingredient, "id">) => void;
   removeIngredient: (id: string) => void;
+  restockIngredient: (id: string, amount: number, notes?: string) => Promise<void>;
+  adjustIngredient: (id: string, quantity: number, movementType: string, notes: string) => Promise<void>;
+  availableServingsMap: Record<string, { servings: number; bottleneck?: string; ingredientsCount?: number } | null>;
+  refreshAvailableServings: () => Promise<void>;
 
   orders: Order[];
   placeOrder: (
@@ -378,6 +405,7 @@ interface Ctx {
     cashGiven?: number,
     orderType?: string,
   ) => Promise<Order>;
+  voidOrder: (orderId: string, voidReason: string) => Promise<void>;
 
   settings: Settings;
   /** Persist full settings to the server (Settings page uses a draft until Save). */
@@ -483,6 +511,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<AppliedDiscount>({ type: "None" });
   const [ingredients, setIngredients] = useState<Ingredient[]>(INITIAL_INGREDIENTS);
+  const [availableServingsMap, setAvailableServingsMap] = useState<Record<string, { servings: number; bottleneck?: string; ingredientsCount?: number } | null>>({});
   const [orders, setOrders] = useState<Order[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [employees, setEmployees] = useState<EmployeeUser[]>([]);
@@ -508,16 +537,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshAvailableServings = useCallback(async () => {
+    try {
+      const { data } = await api.get("/recipes/available-servings");
+      if (data && typeof data === "object") {
+        setAvailableServingsMap(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const refreshIngredients = useCallback(async () => {
     try {
       const { data } = await api.get("/inventory/items");
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setIngredients(data);
       }
+      refreshAvailableServings().catch(() => {});
     } catch {
       /* ignore if offline */
     }
-  }, []);
+  }, [refreshAvailableServings]);
 
   const refreshOrders = useCallback(async () => {
     try {
@@ -525,25 +566,41 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (Array.isArray(data)) {
         const mapped = data.map((o: any) => {
           const total = Number(o.total_amount) || 0;
-          const items: CartItem[] = (o.items || []).map((item: any, idx: number) => ({
-            id: String(item.id || idx),
-            product: {
-              id: String(item.menu_item_id || item.product_id || idx),
-              name: item.product_name || `Item #${item.menu_item_id || item.product_id}`,
-              price: Number(item.price) || 0,
-              category: "Coffee",
-              unit: "cup",
-              batchNo: "",
-            },
-            qty: Number(item.quantity) || 1,
-            size: item.size || "Regular",
-            sugar: "100%",
-            milk: item.milk || "Whole Milk",
-            addons: [],
-            notes: "",
-            unitPrice: Number(item.price) || 0,
-          }));
-          const subtotal = items.reduce((s, i) => s + i.unitPrice * i.qty, total);
+          const items: CartItem[] = (o.items || []).map((item: any, idx: number) => {
+            let parsedOpts: any = {};
+            if (item.options_json) {
+              try { parsedOpts = JSON.parse(item.options_json); } catch {}
+            }
+            const addonsDetails: AddonItem[] = Array.isArray(parsedOpts.addons)
+              ? parsedOpts.addons.map((a: any) => (typeof a === "string" ? { name: a, price: 0 } : a))
+              : [];
+            const addonsStrings: string[] = addonsDetails.map((a) => a.name);
+            const basePrice = item.base_price !== null && item.base_price !== undefined ? Number(item.base_price) : Number(item.price) || 0;
+            const unitPrice = Number(item.price) || basePrice;
+
+            return {
+              id: String(item.id || idx),
+              product: {
+                id: String(item.menu_item_id || item.product_id || idx),
+                name: item.product_name || `Item #${item.menu_item_id || item.product_id}`,
+                price: basePrice,
+                category: "Coffee",
+                unit: "cup",
+                batchNo: "",
+              },
+              qty: Number(item.quantity) || 1,
+              size: parsedOpts.size || item.size || "Regular",
+              sugar: parsedOpts.sugar || "100%",
+              milk: parsedOpts.milk || "Whole Milk",
+              addons: addonsStrings,
+              addonsDetails,
+              basePrice,
+              notes: parsedOpts.notes || "",
+              unitPrice,
+              itemTotal: Number(item.item_total) || (unitPrice * (Number(item.quantity) || 1)),
+            };
+          });
+          const subtotal = items.reduce((s, i) => s + (i.unitPrice * i.qty), total);
           const discType = (o.discount_type === "Senior" || o.discount_type === "PWD") ? o.discount_type : "None";
           const discAmt = Number(o.discount_amount) || 0;
           const discRate = Number(o.discount_rate) || 0;
@@ -561,7 +618,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             vatExemptSales: 0,
             serviceCharge: 0,
             total,
-            method: (o.payment_method === "QR" ? "QR" : "Cash") as "Cash" | "QR",
+            method: (o.payment_method === "QR" || o.payment_method === "GCash" ? "QR" : "Cash") as "Cash" | "QR",
             cashier: o.created_by_name || "Staff",
             createdAt: o.created_at,
             customerName: o.customer_name || undefined,
@@ -571,6 +628,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
               beneficiary: o.beneficiary_name || undefined,
             },
             discountRate: discRate,
+            orderStatus: o.order_status || "completed",
+            paymentStatus: o.payment_status || "paid",
+            voidedBy: o.voided_by,
+            voidedByName: o.voided_by_name,
+            voidedAt: o.voided_at,
+            voidReason: o.void_reason,
           };
         });
         setOrders(mapped);
@@ -675,30 +738,26 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const [appliedPromo, setAppliedPromo] = useState<Promo | null>(null);
 
-  const gross = cart.reduce((s, i) => s + i.unitPrice * i.qty, 0);
-  const isExempt = discount.type === "Senior" || discount.type === "PWD";
-  const exemptDiscountRate = getExemptDiscountRate(settings, discount.type);
-  const baseNoVat = isExempt ? gross / (1 + settings.vatRate / 100) : gross;
-  const discountAmount = isExempt ? baseNoVat * (exemptDiscountRate / 100) : 0;
+  const updateCartItem = (id: string, updated: CartItem) => {
+    setCart((prev) => prev.map((item) => (item.id === id ? updated : item)));
+  };
 
-  // Promo Discount Calculation
-  let promoDiscountAmount = 0;
-  if (appliedPromo) {
-    if (appliedPromo.discount_type === "percentage") {
-      promoDiscountAmount = (gross * Number(appliedPromo.discount_value)) / 100;
-    } else {
-      promoDiscountAmount = Math.min(gross, Number(appliedPromo.discount_value));
-    }
-  }
+  const computedTotals = calculateOrderTotals({
+    items: cart,
+    promo: appliedPromo,
+    discount,
+    settings,
+  });
 
-  const vatExemptSales = isExempt ? Math.max(0, baseNoVat - discountAmount) : 0;
-  const grossAfterPromo = Math.max(0, gross - promoDiscountAmount);
-  const vatableSales = isExempt ? 0 : grossAfterPromo / (1 + (settings.vatEnabled ? settings.vatRate / 100 : 0));
-  const vatAmount = isExempt ? 0 : settings.vatEnabled ? grossAfterPromo - vatableSales : 0;
-  const taxableForService = isExempt ? vatExemptSales : grossAfterPromo;
-  const serviceCharge = settings.serviceEnabled ? taxableForService * (settings.serviceRate / 100) : 0;
-  const cartTotal = (isExempt ? vatExemptSales : grossAfterPromo) + serviceCharge;
-  const cartSubtotal = gross;
+  const cartSubtotal = computedTotals.grossSubtotal;
+  const discountAmount = computedTotals.discountAmount;
+  const promoDiscountAmount = computedTotals.promoDiscountAmount;
+  const vatableSales = computedTotals.vatableSales;
+  const vatAmount = computedTotals.vatAmount;
+  const vatExemptSales = computedTotals.vatExemptSales;
+  const serviceCharge = computedTotals.serviceCharge;
+  const cartTotal = computedTotals.grandTotal;
+  const exemptDiscountRate = computedTotals.exemptDiscountRate;
 
   const placeOrder = async (
     method: "Cash" | "QR",
@@ -730,13 +789,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       discountRate: exemptDiscountRate,
       cashGiven: cashGivenAmount,
       orderType,
+      orderStatus: "completed",
+      paymentStatus: "paid",
     };
 
+    let savedOrder: Order = order;
     try {
-      await api.post("/orders", {
+      const { data: created } = await api.post("/orders", {
         customerName: customer?.name,
         totalAmount: cartTotal,
-        paymentMethod: method,
+        paymentMethod: method === "QR" ? "GCash" : method,
+        paymentStatus: "paid",
         orderStatus: "completed",
         promoId: appliedPromo?.id,
         promoName: appliedPromo?.promo_name,
@@ -751,22 +814,59 @@ export function PosProvider({ children }: { children: ReactNode }) {
           productId: Number(i.product.id) || 1,
           quantity: i.qty,
           price: i.unitPrice,
+          basePrice: i.basePrice ?? i.product.price,
+          itemTotal: i.itemTotal ?? (i.unitPrice * i.qty),
+          size: i.size,
+          milk: i.milk,
+          sugar: i.sugar,
+          notes: i.notes,
+          addons: i.addons,
+          addonsDetails: i.addonsDetails || [],
         })),
       });
-      await refreshOrders();
+
+      if (created && created.id) {
+        savedOrder = {
+          ...order,
+          id: String(created.id),
+          number: Number(created.id),
+        };
+      }
+      await Promise.all([refreshOrders(), refreshIngredients()]);
     } catch (err) {
       if (err && typeof err === "object" && "response" in err && err.response) {
         throw err;
       }
     }
 
-    setOrders((o) => [order, ...o]);
     setCart([]);
     setDiscount({ type: "None" });
     setAppliedPromo(null);
     refreshMenu().catch(() => { });
-    logAudit("Place order", `OR #${formatOrderNumber(order.number, order.createdAt)} • ₱${order.total.toFixed(2)} • ${method}`);
-    return order;
+    refreshIngredients().catch(() => { });
+    logAudit("Place order", `OR #${formatOrderNumber(savedOrder.number, savedOrder.createdAt)} • ₱${savedOrder.total.toFixed(2)} • ${method}`);
+    return savedOrder;
+  };
+
+  const voidOrder = async (orderId: string, voidReason: string) => {
+    const { data: voided } = await api.post(`/orders/${orderId}/void`, { voidReason });
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === orderId || String(o.number) === String(orderId) || String(o.id) === String(orderId)) {
+          return {
+            ...o,
+            orderStatus: "voided",
+            paymentStatus: "voided",
+            voidedBy: voided?.voided_by || user?.id,
+            voidedByName: voided?.voided_by_name || user?.fullname || "Authorized User",
+            voidedAt: voided?.voided_at || new Date().toISOString(),
+            voidReason: voided?.void_reason || voidReason,
+          };
+        }
+        return o;
+      }),
+    );
+    await Promise.all([refreshOrders(), refreshIngredients()]);
   };
 
   const addEmployee = async (data: {
@@ -811,10 +911,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
         logout,
         cart,
         addToCart: (item) => setCart((c) => [...c, item]),
+        updateCartItem,
         removeFromCart: (id) => setCart((c) => c.filter((i) => i.id !== id)),
         updateQty: (id, delta) =>
           setCart((c) =>
-            c.map((i) => (i.id === id ? { ...i, qty: Math.max(1, i.qty + delta) } : i)),
+            c.map((i) => {
+              if (i.id !== id) return i;
+              const newQty = Math.max(1, i.qty + delta);
+              const unitPrice = i.unitPrice || i.product.price;
+              return {
+                ...i,
+                qty: newQty,
+                itemTotal: unitPrice * newQty,
+              };
+            }),
           ),
         clearCart: () => {
           setCart([]);
@@ -883,8 +993,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
           }
           logAudit("Remove inventory item", id);
         },
+        restockIngredient: async (id, amount, notes) => {
+          await api.post(`/inventory/items/${id}/restock`, { amount, notes });
+          await refreshIngredients();
+        },
+        adjustIngredient: async (id, quantity, movementType, notes) => {
+          await api.post(`/inventory/items/${id}/adjust`, { quantity, movementType, notes });
+          await refreshIngredients();
+        },
+        availableServingsMap,
+        refreshAvailableServings,
         orders,
         placeOrder,
+        voidOrder,
         settings,
         saveSettings: async (next) => {
           const merged = mergeSettings(DEFAULT_SETTINGS, next);

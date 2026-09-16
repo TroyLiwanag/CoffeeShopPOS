@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePos, Role, type EmployeeUser } from "@/lib/pos-store";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 import { Trash2, UserPlus, ShieldCheck, Briefcase, Pencil, X, Save, Clock } from "lucide-react";
 import { PermissionGate } from "@/components/PermissionGate";
 import {
@@ -57,6 +58,7 @@ function EmployeesScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [userModalOpen, setUserModalOpen] = useState(false);
+  const [userConfirmOpen, setUserConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<EmployeeUser | null>(null);
   const [attendanceTarget, setAttendanceTarget] = useState<EmployeeUser | null>(null);
 
@@ -68,6 +70,7 @@ function EmployeesScreen() {
 
   const closeUserModal = () => {
     setUserModalOpen(false);
+    setUserConfirmOpen(false);
     setEditingId(null);
     setForm({ ...blank, permissions: { ...defaultPermissions } });
   };
@@ -95,12 +98,15 @@ function EmployeesScreen() {
     setUserModalOpen(true);
   };
 
-  const submit = async (e: React.FormEvent) => {
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fullname.trim() || !form.email.trim()) return;
     if (!editingId && !form.password.trim()) return;
     if (partialMode && editingId && !isAdmin) return;
+    setUserConfirmOpen(true);
+  };
 
+  const performSaveUser = async () => {
     const isEdit = !!editingId;
     const payloadRole = canManagePermissions ? form.role : "staff";
     const payloadPermissions = canManagePermissions
@@ -162,7 +168,7 @@ function EmployeesScreen() {
       <form
         className="modal-panel relative w-full max-w-lg max-h-[90dvh] flex flex-col animate-scale-in"
         onClick={(e) => e.stopPropagation()}
-        onSubmit={submit}
+        onSubmit={handleFormSubmit}
       >
         <div className="sticky top-0 glass-bar px-4 sm:px-6 py-4 border-b flex items-center justify-between rounded-t-2xl shrink-0">
           <div id="user-modal-title" className="flex items-center gap-2 font-display text-xl">
@@ -420,6 +426,20 @@ function EmployeesScreen() {
               },
             );
           }}
+        />
+
+        <ConfirmActionModal
+          open={userConfirmOpen}
+          title={editingId ? "Save User Changes" : "Create User Account"}
+          message={
+            editingId
+              ? `Are you sure you want to save changes to user "${form.fullname}"?`
+              : `Are you sure you want to create user account "${form.fullname}" (${form.email})?`
+          }
+          confirmLabel={editingId ? "Save Changes" : "Create User"}
+          variant="primary"
+          onClose={() => setUserConfirmOpen(false)}
+          onConfirm={performSaveUser}
         />
 
         {typeof document !== "undefined" && createPortal(userModal, document.body)}
