@@ -52,7 +52,7 @@ export function getExportCsvUrl(filters: AuditFilters = {}) {
   Object.entries(filters).forEach(([k, v]) => {
     if (v !== undefined && v !== "" && v !== "all") params.set(k, String(v));
   });
-  const token = localStorage.getItem("auth_token");
+  const token = sessionStorage.getItem("auth_token");
   const base = api.defaults.baseURL || "http://localhost:5000/api";
   const qs = params.toString();
   return `${base}/audit/export/csv?${qs}${token ? `&_=${Date.now()}` : ""}`;

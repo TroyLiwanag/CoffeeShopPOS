@@ -22,7 +22,7 @@ async function getPayMongoSecretKey() {
 
 /**
  * POST /api/payments/paymongo/create-source
- * Creates a PayMongo Source for GCash / QRPh
+ * Creates a live PayMongo Payment Intent & QR Code for GCash / QRPh
  */
 export async function createSource(req, res) {
   try {
@@ -34,144 +34,167 @@ export async function createSource(req, res) {
     }
 
     const secretKey = await getPayMongoSecretKey();
+    if (!secretKey) {
+      return res.status(400).json({ message: "PayMongo secret key is not configured in settings." });
+    }
+
     const encodedKey = Buffer.from(`${secretKey}:`).toString("base64");
 
-    // Attempt 1: Try creating PayMongo Source (qrph first or gcash)
-    let sourceType = type === "gcash" ? "gcash" : "qrph";
-    let payload = {
+    // Attempt 1: Try PayMongo Payment Intent API with QRPh Payment Method (Official Dynamic QR Code)
+    try {
+      const piRes = await fetch("https://api.paymongo.com/v1/payment_intents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${encodedKey}`,
+        },
+        body: JSON.stringify({
+          data: {
+            attributes: {
+              amount: amountInCents,
+              currency: "PHP",
+              payment_method_allowed: ["qrph", "gcash", "paymaya", "card"],
+              description: description || "Cafe Corazon POS Payment",
+              statement_descriptor: "Cafe Corazon",
+            },
+          },
+        }),
+      });
+
+      const piData = await piRes.json();
+
+      if (piRes.ok && piData.data?.id) {
+        const piId = piData.data.id;
+
+        // Create QRPh Payment Method
+        const pmRes = await fetch("https://api.paymongo.com/v1/payment_methods", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${encodedKey}`,
+          },
+          body: JSON.stringify({
+            data: {
+              attributes: {
+                type: "qrph",
+              },
+            },
+          }),
+        });
+
+        const pmData = await pmRes.json();
+
+        if (pmRes.ok && pmData.data?.id) {
+          const pmId = pmData.data.id;
+
+          // Attach Payment Method to Payment Intent
+          const attachRes = await fetch(`https://api.paymongo.com/v1/payment_intents/${piId}/attach`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Basic ${encodedKey}`,
+            },
+            body: JSON.stringify({
+              data: {
+                attributes: {
+                  payment_method: pmId,
+                  return_url: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=success`,
+                },
+              },
+            }),
+          });
+
+          const attachData = await attachRes.json();
+          const nextAction = attachData.data?.attributes?.next_action;
+          const qrImageUrl = nextAction?.code?.image_url;
+
+          if (attachRes.ok && qrImageUrl) {
+            await logAuditFromReq(
+              req,
+              "PayMongo Intent Created",
+              "Payments",
+              `Created PayMongo Payment Intent ${piId} with dynamic QR Code for ₱${amount}`,
+            );
+
+            return res.json({
+              success: true,
+              sourceId: piId,
+              amount: Number(amount),
+              type: "qrph",
+              checkoutUrl: "",
+              qrCodeUrl: qrImageUrl, // Direct official PayMongo QR Code Image
+              status: attachData.data?.attributes?.status || "awaiting_next_action",
+            });
+          }
+        }
+      }
+    } catch (piErr) {
+      console.warn("PayMongo PaymentIntent attempt failed, attempting fallback...", piErr);
+    }
+
+    // Attempt 2: Fallback to PayMongo Checkout Sessions API
+    const csPayload = {
       data: {
         attributes: {
-          amount: amountInCents,
-          currency: "PHP",
-          type: sourceType,
-          redirect: {
-            success: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=success`,
-            failed: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=failed`,
-          },
+          send_email_receipt: false,
+          show_description: true,
+          show_line_items: true,
+          cancel_url: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=cancelled`,
+          success_url: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=success`,
+          line_items: [
+            {
+              currency: "PHP",
+              amount: amountInCents,
+              description: description || "Cafe Corazon POS Order",
+              name: "Coffee Shop Order",
+              quantity: 1,
+            },
+          ],
           billing: {
             name: req.body.customerName || "Cafe Corazon",
             email: req.body.customerEmail || "customer@cafecorazon.shop",
           },
+          payment_method_types: ["qrph", "paymaya", "card", "gcash"],
         },
       },
     };
 
-    let response = await fetch("https://api.paymongo.com/v1/sources", {
+    const csRes = await fetch("https://api.paymongo.com/v1/checkout_sessions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Basic ${encodedKey}`,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(csPayload),
     });
 
-    let responseData = await response.json();
+    const csData = await csRes.json();
 
-    // If GCash source fails because organization isn't enabled for legacy direct gcash, retry with QRPh or Checkout Session
-    if (!response.ok && responseData.errors && sourceType === "gcash") {
-      sourceType = "qrph";
-      payload.data.attributes.type = "qrph";
-      response = await fetch("https://api.paymongo.com/v1/sources", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${encodedKey}`,
-        },
-        body: JSON.stringify(payload),
+    if (csRes.ok && csData.data) {
+      const checkoutUrl = csData.data.attributes?.checkout_url || "";
+      const sourceId = csData.data.id;
+      const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(checkoutUrl)}`;
+
+      await logAuditFromReq(
+        req,
+        "PayMongo Checkout Created",
+        "Payments",
+        `Created PayMongo Checkout Session ${sourceId} for ₱${amount}`,
+      );
+
+      return res.json({
+        success: true,
+        sourceId,
+        amount: Number(amount),
+        type: "checkout_session",
+        checkoutUrl,
+        qrCodeUrl,
+        status: "pending",
       });
-      responseData = await response.json();
     }
 
-    // Attempt 2: If Sources API fails, try PayMongo Checkout Session API (supports QRPh, GCash, Maya, Cards)
-    if (!response.ok || responseData.errors) {
-      const csPayload = {
-        data: {
-          attributes: {
-            send_email_receipt: false,
-            show_description: true,
-            show_line_items: true,
-            cancel_url: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=cancelled`,
-            success_url: `${process.env.FRONTEND_URL || "https://cafecorazon.shop"}/payment?status=success`,
-            line_items: [
-              {
-                currency: "PHP",
-                amount: amountInCents,
-                description: "Cafe Corazon POS Order",
-                name: "Coffee Shop Order",
-                quantity: 1,
-              },
-            ],
-            billing: {
-              name: req.body.customerName || "Cafe Corazon",
-              email: req.body.customerEmail || "customer@cafecorazon.shop",
-            },
-            payment_method_types: ["qrph", "paymaya", "card", "gcash"],
-          },
-        },
-      };
-
-      const csRes = await fetch("https://api.paymongo.com/v1/checkout_sessions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${encodedKey}`,
-        },
-        body: JSON.stringify(csPayload),
-      });
-
-      const csData = await csRes.json();
-
-      if (csRes.ok && csData.data) {
-        const checkoutUrl = csData.data.attributes?.checkout_url || "";
-        const sourceId = csData.data.id;
-        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkoutUrl)}`;
-
-        await logAuditFromReq(
-          req,
-          "PayMongo Checkout Created",
-          "Payments",
-          `Created PayMongo Checkout Session ${sourceId} for ₱${amount}`,
-        );
-
-        return res.json({
-          success: true,
-          sourceId,
-          amount: Number(amount),
-          type: "checkout_session",
-          checkoutUrl,
-          qrCodeUrl,
-          status: "pending",
-        });
-      }
-
-      const errMsg = responseData.errors?.[0]?.detail || csData.errors?.[0]?.detail || "Failed to create PayMongo payment.";
-      return res.status(400).json({ message: errMsg, errors: responseData.errors || csData.errors });
-    }
-
-    const attr = responseData.data?.attributes || {};
-    const sourceId = responseData.data?.id;
-    const checkoutUrl = attr.redirect?.checkout_url || "";
-    const status = attr.status || "pending";
-
-    // Dynamic QR Generator URL for QRPh / GCash display
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkoutUrl || sourceId)}`;
-
-    await logAuditFromReq(
-      req,
-      "PayMongo Source Created",
-      "Payments",
-      `Created PayMongo ${sourceType.toUpperCase()} source ${sourceId} for ₱${amount}`,
-    );
-
-    return res.json({
-      success: true,
-      sourceId,
-      amount: Number(amount),
-      type: sourceType,
-      checkoutUrl,
-      qrCodeUrl,
-      status,
-    });
+    const errMsg = csData.errors?.[0]?.detail || "Failed to generate PayMongo QR Code.";
+    return res.status(400).json({ message: errMsg, errors: csData.errors });
   } catch (err) {
     console.error("PayMongo createSource error:", err);
     return res.status(500).json({ message: err.message || "PayMongo payment creation failed." });
@@ -180,15 +203,26 @@ export async function createSource(req, res) {
 
 /**
  * GET /api/payments/paymongo/status/:sourceId
- * Check live status of a PayMongo source
+ * Check live status of a PayMongo source, payment intent, or checkout session
  */
 export async function getSourceStatus(req, res) {
   try {
     const { sourceId } = req.params;
+    if (!sourceId) return res.status(400).json({ message: "Source ID is required." });
+
     const secretKey = await getPayMongoSecretKey();
+    if (!secretKey) return res.status(400).json({ message: "PayMongo secret key missing." });
+
     const encodedKey = Buffer.from(`${secretKey}:`).toString("base64");
 
-    const response = await fetch(`https://api.paymongo.com/v1/sources/${sourceId}`, {
+    let endpoint = `https://api.paymongo.com/v1/sources/${sourceId}`;
+    if (sourceId.startsWith("pi_")) {
+      endpoint = `https://api.paymongo.com/v1/payment_intents/${sourceId}`;
+    } else if (sourceId.startsWith("cs_")) {
+      endpoint = `https://api.paymongo.com/v1/checkout_sessions/${sourceId}`;
+    }
+
+    const response = await fetch(endpoint, {
       method: "GET",
       headers: {
         Authorization: `Basic ${encodedKey}`,
@@ -202,13 +236,28 @@ export async function getSourceStatus(req, res) {
     }
 
     const attr = responseData.data?.attributes || {};
-    const status = attr.status || "pending";
+    let status = attr.status || "pending";
+    let isPaid = false;
+
+    if (sourceId.startsWith("pi_")) {
+      isPaid = status === "succeeded";
+      if (isPaid) status = "paid";
+    } else if (sourceId.startsWith("cs_")) {
+      const payments = attr.payments || [];
+      const hasPaid = payments.some(
+        (p) => p.attributes?.status === "paid" || p.attributes?.status === "succeeded"
+      );
+      isPaid = status === "paid" || hasPaid || attr.payment_intent?.attributes?.status === "succeeded";
+      if (isPaid) status = "paid";
+    } else {
+      isPaid = status === "chargeable" || status === "paid";
+    }
 
     return res.json({
       sourceId,
-      status, // 'pending', 'chargeable', 'paid', 'cancelled'
+      status, // 'pending', 'paid', 'succeeded', 'cancelled'
       amount: attr.amount ? attr.amount / 100 : 0,
-      isPaid: status === "chargeable" || status === "paid",
+      isPaid,
     });
   } catch (err) {
     return res.status(500).json({ message: err.message || "PayMongo status check failed." });

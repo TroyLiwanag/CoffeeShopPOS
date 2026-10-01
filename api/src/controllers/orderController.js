@@ -1,5 +1,6 @@
+import bcrypt from "bcryptjs";
 import pool from "../config/db.js";
-import { logAuditFromReq } from "../utils/auditLogger.js";
+import { logAudit, logAuditFromReq } from "../utils/auditLogger.js";
 import { convertQuantity } from "../utils/unitConverter.js";
 
 let columnsChecked = false;
@@ -417,10 +418,10 @@ export async function updateStatus(req, res) {
 export async function voidOrder(req, res) {
   await ensureDiscountColumns();
   const { id } = req.params;
-  const { voidReason } = req.body;
+  const voidReason = req.body.voidReason || req.body.refundReason;
 
   if (!voidReason || !String(voidReason).trim()) {
-    return res.status(400).json({ message: "A reason is required to void an order." });
+    return res.status(400).json({ message: "A reason is required to refund an order." });
   }
 
   const conn = await pool.getConnection();
@@ -434,15 +435,15 @@ export async function voidOrder(req, res) {
     }
 
     const order = orders[0];
-    if (order.order_status === "voided") {
+    if (order.order_status === "voided" || order.order_status === "refunded") {
       await conn.rollback();
-      return res.status(400).json({ message: "Order is already voided." });
+      return res.status(400).json({ message: "Order is already refunded." });
     }
 
-    // Update order status to voided
+    // Update order status to refunded
     await conn.query(
       `UPDATE orders
-       SET order_status = 'voided', payment_status = 'voided',
+       SET order_status = 'refunded', payment_status = 'refunded',
            voided_by = ?, voided_by_name = ?, voided_at = NOW(), void_reason = ?
        WHERE id = ?`,
       [req.user.id, req.user.fullname || "User", voidReason.trim(), id],
@@ -457,7 +458,7 @@ export async function voidOrder(req, res) {
         await conn.query(`UPDATE products SET stock = stock + ? WHERE id = ?`, [item.quantity, item.product_id]);
         await conn.query(
           `INSERT INTO inventory_logs (product_id, action_type, quantity, performed_by)
-           VALUES (?, 'void_restock', ?, ?)`,
+           VALUES (?, 'refund_restock', ?, ?)`,
           [item.product_id, item.quantity, req.user.id],
         );
       }
@@ -488,7 +489,7 @@ export async function voidOrder(req, res) {
             newStock,
             id,
             req.user.id,
-            `Stock restored due to Order #${id} void. Reason: ${voidReason.trim()}`,
+            `Stock restored due to Order #${id} refund. Reason: ${voidReason.trim()}`,
           ],
         );
       }
@@ -499,17 +500,148 @@ export async function voidOrder(req, res) {
 
     await logAuditFromReq(
       req,
-      "Void Order",
+      "Refund Order",
       "Orders",
-      `Voided Order #${id} — ₱${order.total_amount}. Reason: ${voidReason.trim()}`,
+      `Refunded Order #${id} — ₱${order.total_amount}. Reason: ${voidReason.trim()}`,
     );
 
     res.json(rows[0] || order);
   } catch (err) {
     await conn.rollback();
-    console.error("voidOrder error:", err);
-    res.status(500).json({ message: err.message || "Failed to void order." });
+    console.error("refundOrder error:", err);
+    res.status(500).json({ message: err.message || "Failed to refund order." });
   } finally {
     conn.release();
   }
+}
+
+export const refundOrder = voidOrder;
+
+/**
+ * VOID_ITEM — voids a cart item before checkout.
+ * PIN verification, cart update, and audit logging happen atomically.
+ */
+
+// Simple in-memory rate limiter: userId -> { count, resetAt }
+const _voidPinAttempts = {};
+const _MAX_ATTEMPTS = 5;
+const _WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+function checkVoidRateLimit(userId) {
+  const now = Date.now();
+  const entry = _voidPinAttempts[userId];
+  if (!entry || now > entry.resetAt) {
+    _voidPinAttempts[userId] = { count: 1, resetAt: now + _WINDOW_MS };
+    return true;
+  }
+  if (entry.count >= _MAX_ATTEMPTS) return false;
+  entry.count++;
+  return true;
+}
+
+function clearVoidRateLimit(userId) {
+  delete _voidPinAttempts[userId];
+}
+
+export async function voidCartItem(req, res) {
+  const {
+    voidPin,
+    cartItemId,
+    productId,
+    productName,
+    qtyToVoid,
+    unitPrice,
+    voidReason,
+    voidNotes,
+  } = req.body;
+
+  // Basic validation
+  if (!voidPin || !String(voidPin).trim()) {
+    return res.status(400).json({ message: "Admin Void PIN is required." });
+  }
+  if (!voidReason || !String(voidReason).trim()) {
+    return res.status(400).json({ message: "Void reason is required." });
+  }
+  if (voidReason === "Other" && (!voidNotes || !String(voidNotes).trim())) {
+    return res.status(400).json({ message: "Please provide notes when selecting 'Other' as the reason." });
+  }
+  const qty = Number(qtyToVoid);
+  if (!qty || qty < 1) {
+    return res.status(400).json({ message: "Void quantity must be at least 1." });
+  }
+  if (!productName) {
+    return res.status(400).json({ message: "Product name is required." });
+  }
+
+  // Rate limit check
+  const rateLimitKey = String(req.user.id);
+  if (!checkVoidRateLimit(rateLimitKey)) {
+    return res.status(429).json({ message: "Too many incorrect PIN attempts. Please wait 5 minutes before trying again." });
+  }
+
+  // Fetch and verify void PIN from shop_settings
+  const [settingsRows] = await pool.query(`SELECT settings_json FROM shop_settings WHERE id = 1`);
+  if (!settingsRows.length) {
+    return res.status(500).json({ message: "Shop settings not configured." });
+  }
+  let settingsObj = {};
+  try {
+    settingsObj = typeof settingsRows[0].settings_json === "string"
+      ? JSON.parse(settingsRows[0].settings_json)
+      : settingsRows[0].settings_json;
+  } catch {
+    return res.status(500).json({ message: "Could not read shop settings." });
+  }
+
+  if (settingsObj.voidPinEnabled === false) {
+    // When PIN is disabled, require admin role
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Void authorization requires an Admin account when PIN is disabled." });
+    }
+  } else {
+    if (!settingsObj.voidPinHash) {
+      return res.status(400).json({ message: "Void PIN has not been configured yet. Ask an Admin to set it in Settings → Security." });
+    }
+    const pinMatch = await bcrypt.compare(String(voidPin).trim(), settingsObj.voidPinHash);
+    if (!pinMatch) {
+      return res.status(401).json({ message: "Invalid Admin Void PIN. Please try again." });
+    }
+    clearVoidRateLimit(rateLimitKey);
+  }
+
+  // Build audit description — never include the actual PIN
+  const price = Number(unitPrice) || 0;
+  const totalVoided = price * qty;
+  const performedByName = req.user.fullname || req.user.email || "Unknown";
+  const performedById = req.user.id;
+  const reasonText = voidReason === "Other"
+    ? `Other — ${String(voidNotes || "").trim()}`
+    : String(voidReason).trim();
+
+  const description = [
+    `Product: ${productName}`,
+    productId ? `Product ID: ${productId}` : "",
+    `Qty Voided: ${qty}`,
+    `Unit Price: ₱${price.toFixed(2)}`,
+    `Voided Amount: ₱${totalVoided.toFixed(2)}`,
+    `Reason: ${reasonText}`,
+    `Authorization: ADMIN_VOID_PIN`,
+    cartItemId ? `Cart Item ID: ${cartItemId}` : "",
+  ].filter(Boolean).join(" | ");
+
+  await logAudit(req, {
+    userId: performedById,
+    userName: performedByName,
+    actionType: "VOID_ITEM",
+    moduleName: "POS",
+    description,
+  });
+
+  res.json({
+    success: true,
+    message: `${productName} × ${qty} voided successfully.`,
+    voidedAmount: totalVoided,
+    productName,
+    qtyVoided: qty,
+  });
 }

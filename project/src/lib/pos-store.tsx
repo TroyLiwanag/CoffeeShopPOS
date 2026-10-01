@@ -170,8 +170,8 @@ export interface Order {
   paymentMethod?: string;
   paymentReference?: string;
   orderType?: string;
-  orderStatus?: "pending" | "completed" | "cancelled" | "voided";
-  paymentStatus?: "paid" | "pending" | "cancelled" | "voided";
+  orderStatus?: "pending" | "completed" | "cancelled" | "voided" | "refunded";
+  paymentStatus?: "paid" | "pending" | "cancelled" | "voided" | "refunded";
   voidedBy?: string;
   voidedByName?: string;
   voidedAt?: string;
@@ -406,6 +406,7 @@ interface Ctx {
     orderType?: string,
   ) => Promise<Order>;
   voidOrder: (orderId: string, voidReason: string) => Promise<void>;
+  refundOrder: (orderId: string, refundReason: string) => Promise<void>;
 
   settings: Settings;
   /** Persist full settings to the server (Settings page uses a draft until Save). */
@@ -678,16 +679,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
         /* use local defaults */
       }
 
-      const token = localStorage.getItem("auth_token");
+      // Clear legacy persistent tokens from localStorage
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("pos.user");
+
+      const token = sessionStorage.getItem("auth_token");
       if (token) {
         try {
           const { data } = await api.get("/auth/me");
           setUser(mapApiUser(data.user));
           await Promise.all([refreshEmployees(), refreshMenu(), refreshOrders(), refreshIngredients()]);
         } catch {
-          localStorage.removeItem("auth_token");
+          sessionStorage.removeItem("auth_token");
           setUser(null);
         }
+      } else {
+        setUser(null);
       }
       setHydrated(true);
     };
@@ -695,7 +702,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [refreshEmployees, refreshMenu, refreshOrders, refreshIngredients]);
 
   useEffect(() => {
-    if (hydrated) localStorage.setItem("pos.user", JSON.stringify(user));
+    if (hydrated) {
+      if (user) {
+        sessionStorage.setItem("pos.user", JSON.stringify(user));
+      } else {
+        sessionStorage.removeItem("pos.user");
+      }
+    }
   }, [user, hydrated]);
   useEffect(() => {
     if (hydrated) localStorage.setItem("pos.ingredients", JSON.stringify(ingredients));
@@ -713,7 +726,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string): Promise<{ ok: boolean; message?: string }> => {
     try {
       const { data } = await api.post("/auth/login", { email, password });
-      localStorage.setItem("auth_token", data.token);
+      sessionStorage.setItem("auth_token", data.token);
+      localStorage.removeItem("auth_token");
       const mapped = mapApiUser(data.user);
       setUser(mapped);
       await Promise.all([refreshEmployees(), refreshMenu(), refreshOrders(), refreshIngredients()]);
@@ -730,7 +744,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     } catch {
       /* proceed with local logout */
     }
+    sessionStorage.removeItem("auth_token");
+    sessionStorage.removeItem("pos.user");
     localStorage.removeItem("auth_token");
+    localStorage.removeItem("pos.user");
     setUser(null);
     setCart([]);
     setDiscount({ type: "None" });
@@ -848,19 +865,26 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return savedOrder;
   };
 
-  const voidOrder = async (orderId: string, voidReason: string) => {
-    const { data: voided } = await api.post(`/orders/${orderId}/void`, { voidReason });
+  const refundOrder = async (orderId: string, refundReason: string) => {
+    let data: any;
+    try {
+      const res = await api.post(`/orders/${orderId}/refund`, { refundReason, voidReason: refundReason });
+      data = res.data;
+    } catch {
+      const res = await api.post(`/orders/${orderId}/void`, { voidReason: refundReason, refundReason });
+      data = res.data;
+    }
     setOrders((prev) =>
       prev.map((o) => {
         if (o.id === orderId || String(o.number) === String(orderId) || String(o.id) === String(orderId)) {
           return {
             ...o,
-            orderStatus: "voided",
-            paymentStatus: "voided",
-            voidedBy: voided?.voided_by || user?.id,
-            voidedByName: voided?.voided_by_name || user?.fullname || "Authorized User",
-            voidedAt: voided?.voided_at || new Date().toISOString(),
-            voidReason: voided?.void_reason || voidReason,
+            orderStatus: "refunded",
+            paymentStatus: "refunded",
+            voidedBy: data?.voided_by || user?.id,
+            voidedByName: data?.voided_by_name || user?.fullname || "Authorized User",
+            voidedAt: data?.voided_at || new Date().toISOString(),
+            voidReason: data?.void_reason || refundReason,
           };
         }
         return o;
@@ -868,6 +892,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     );
     await Promise.all([refreshOrders(), refreshIngredients()]);
   };
+
+  const voidOrder = refundOrder;
 
   const addEmployee = async (data: {
     fullname: string;
@@ -944,6 +970,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         serviceCharge,
         cartTotal,
         ingredients,
+        refreshIngredients,
         updateIngredient: async (id, updates) => {
           const item = ingredients.find((i) => i.id === id);
           const patch = typeof updates === "number" ? { stock: updates } : updates;
@@ -1006,6 +1033,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         orders,
         placeOrder,
         voidOrder,
+        refundOrder,
         settings,
         saveSettings: async (next) => {
           const merged = mergeSettings(DEFAULT_SETTINGS, next);

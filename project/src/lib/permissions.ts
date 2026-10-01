@@ -16,7 +16,7 @@ export type Permissions = {
 };
 
 export const PERMISSION_LABELS: Record<keyof Permissions, string> = {
-  canViewDashboard: "View dashboard / POS",
+  canViewDashboard: "View Dashboard",
   canManageUsers: "Manage users",
   canManageProducts: "Manage products",
   canManageMenu: "Manage menu",
@@ -32,13 +32,14 @@ export const PERMISSION_LABELS: Record<keyof Permissions, string> = {
 } as Record<keyof Permissions, string>;
 
 export const ROUTE_PERMISSIONS: Record<string, keyof Permissions | null> = {
-  "/pos": "canViewDashboard",
+  "/dashboard": "canViewDashboard",
+  "/pos": null,
   "/orders": "canManageOrders",
   "/payment": "canManageOrders",
   "/inventory": "canManageInventory",
   "/reports": "canManageReports",
   "/payroll": "canManageSales",
-  "/attendance": "canViewDashboard",
+  "/attendance": "canManageAttendance",
   "/employees": "canManageUsers",
   "/menu": "canManageMenu",
   "/promos": "canManagePromos",

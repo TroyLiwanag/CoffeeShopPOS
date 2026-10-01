@@ -57,9 +57,11 @@ function PaymentScreen() {
     checkoutUrl: string;
     qrCodeUrl: string;
     status: string;
+    amount: number;
   } | null>(null);
 
   const handleGeneratePayMongoQR = async (type: "gcash" | "qrph" = "gcash") => {
+    if (cartTotal <= 0) return;
     setPaymongoLoading(true);
     try {
       const { data } = await api.post("/payments/paymongo/create-source", {
@@ -68,7 +70,7 @@ function PaymentScreen() {
         customerName: customer.name || "Cafe Corazon Customer",
       });
       if (data.success && data.sourceId) {
-        setPaymongoSource(data);
+        setPaymongoSource({ ...data, amount: cartTotal });
         setQrReference(`PAYMONGO-${data.sourceId.slice(-8).toUpperCase()}`);
         toast.success(`Generated PayMongo ${type.toUpperCase()} QR Code!`);
       }
@@ -78,6 +80,37 @@ function PaymentScreen() {
       setPaymongoLoading(false);
     }
   };
+
+  // Auto-generate PayMongo QR Code when GCash / QR mode is selected or cart total changes
+  useEffect(() => {
+    if (method === "QR" && cartTotal > 0) {
+      if (!paymongoSource || paymongoSource.amount !== cartTotal) {
+        handleGeneratePayMongoQR("gcash");
+      }
+    }
+  }, [method, cartTotal]);
+
+  // Poll PayMongo status every 3 seconds while on QR payment tab if pending
+  useEffect(() => {
+    if (method !== "QR" || !paymongoSource?.sourceId || paymongoSource.status === "paid") {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/payments/paymongo/status/${paymongoSource.sourceId}`);
+        if (data.isPaid || data.status === "paid") {
+          setPaymongoSource((prev) => (prev ? { ...prev, status: "paid" } : null));
+          setQrReference(`PAYMONGO-${paymongoSource.sourceId.slice(-8).toUpperCase()}`);
+          toast.success("✓ Payment Received! PayMongo GCash/QR Payment Confirmed!");
+        }
+      } catch {
+        /* ignore polling errors silently */
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [method, paymongoSource?.sourceId, paymongoSource?.status]);
 
   const isExempt = discount.type === "Senior" || discount.type === "PWD";
   const exemptDiscountRate = getExemptDiscountRate(settings, discount.type);
@@ -346,7 +379,12 @@ function PaymentScreen() {
 
                 <button
                   type="button"
-                  onClick={() => setMethod("QR")}
+                  onClick={() => {
+                    setMethod("QR");
+                    if (!paymongoSource || paymongoSource.amount !== cartTotal) {
+                      handleGeneratePayMongoQR("gcash");
+                    }
+                  }}
                   className={cn(
                     "p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left touch-manipulation active:scale-95",
                     method === "QR"
@@ -400,7 +438,7 @@ function PaymentScreen() {
                       className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
-                      {paymongoLoading ? "Generating..." : `Generate PayMongo Live QR (${fmt(cartTotal)})`}
+                      {paymongoLoading ? "Generating PayMongo QR..." : `Re-generate Live QR (${fmt(cartTotal)})`}
                     </button>
                     {paymongoSource?.checkoutUrl && (
                       <a
@@ -415,54 +453,52 @@ function PaymentScreen() {
                   </div>
 
                   {/* QR Code Display Card */}
-                  <div className="bg-white p-4 rounded-xl border shadow-inner text-center space-y-2">
-                    <div className="w-48 h-48 mx-auto bg-white p-2 rounded-lg border flex items-center justify-center relative shadow-sm">
-                      {paymongoSource?.qrCodeUrl ? (
+                  <div className="bg-white p-4 rounded-xl border shadow-inner text-center space-y-3">
+                    <div className="w-56 h-56 mx-auto bg-white p-3 rounded-xl border flex items-center justify-center relative shadow-sm">
+                      {paymongoLoading ? (
+                        <div className="flex flex-col items-center justify-center space-y-2 text-blue-600">
+                          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                          <span className="text-xs font-semibold">Generating PayMongo QR...</span>
+                        </div>
+                      ) : paymongoSource?.qrCodeUrl ? (
                         <img
                           src={paymongoSource.qrCodeUrl}
-                          alt="PayMongo Dynamic QR Code"
+                          alt="PayMongo Official Dynamic QR Code"
                           className="w-full h-full object-contain"
                         />
                       ) : (
-                        <svg viewBox="0 0 100 100" className="w-full h-full text-blue-900 fill-current">
-                          <rect x="0" y="0" width="100" height="100" fill="white" />
-                          <rect x="10" y="10" width="25" height="25" fill="#005CE6" />
-                          <rect x="15" y="15" width="15" height="15" fill="white" />
-                          <rect x="18" y="18" width="9" height="9" fill="#005CE6" />
-                          <rect x="65" y="10" width="25" height="25" fill="#005CE6" />
-                          <rect x="70" y="15" width="15" height="15" fill="white" />
-                          <rect x="73" y="18" width="9" height="9" fill="#005CE6" />
-                          <rect x="10" y="65" width="25" height="25" fill="#005CE6" />
-                          <rect x="15" y="70" width="15" height="15" fill="white" />
-                          <rect x="18" y="73" width="9" height="9" fill="#005CE6" />
-                          <rect x="40" y="10" width="15" height="10" fill="#005CE6" />
-                          <rect x="40" y="25" width="10" height="15" fill="#005CE6" />
-                          <rect x="55" y="25" width="25" height="8" fill="#005CE6" />
-                          <rect x="40" y="45" width="20" height="20" fill="#005CE6" />
-                          <rect x="65" y="45" width="15" height="15" fill="#005CE6" />
-                          <rect x="45" y="70" width="20" height="15" fill="#005CE6" />
-                          <rect x="70" y="70" width="20" height="20" fill="#005CE6" />
-                        </svg>
+                        <div className="text-xs text-muted-foreground">
+                          Click "Re-generate Live QR" to generate QR code.
+                        </div>
                       )}
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        {!paymongoSource?.qrCodeUrl && (
-                          <span className="bg-blue-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded shadow-md border border-white">
-                            GCash
-                          </span>
-                        )}
-                      </div>
                     </div>
+
                     <div className="text-xs font-bold text-foreground">
                       Café Corazon • {settings.phone || "0916 583 6120"}
                     </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Amount: <strong className="text-blue-600 font-bold">{fmt(cartTotal)}</strong>
+                    <div className="text-[12px] text-muted-foreground space-y-1">
+                      <div>Amount: <strong className="text-blue-600 font-bold text-sm">{fmt(cartTotal)}</strong></div>
                       {paymongoSource && (
-                        <span className="block text-emerald-600 font-semibold text-[10px]">
-                          ⚡ PayMongo Source ID: {paymongoSource.sourceId}
-                        </span>
+                        <div className="text-slate-600 font-mono text-[11px]">
+                          ⚡ PayMongo ID: <span className="font-semibold text-foreground">{paymongoSource.sourceId}</span>
+                        </div>
                       )}
                     </div>
+
+                    {/* Live Status Indicator */}
+                    {paymongoSource && (
+                      <div className="pt-2 border-t flex items-center justify-center gap-2">
+                        {paymongoSource.status === "paid" ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                            <Check className="w-4 h-4 text-emerald-600" /> Payment Received & Verified Live!
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold">
+                            <span className="w-2 h-2 rounded-full bg-blue-600 animate-ping" /> Auto-verifying GCash payment status...
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">

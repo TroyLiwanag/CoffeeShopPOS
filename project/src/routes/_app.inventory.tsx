@@ -981,7 +981,6 @@ function InventoryScreen() {
             modalOpen ? (
               <div
                 className="fixed inset-0 z-[9999] flex items-center justify-center p-4 modal-backdrop animate-fade-in"
-                onClick={closeModal}
               >
                 <form
                   className="modal-panel relative w-full max-w-lg rounded-2xl border p-6 bg-card shadow-2xl space-y-4 animate-scale-in"

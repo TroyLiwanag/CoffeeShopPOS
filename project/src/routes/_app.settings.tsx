@@ -1,13 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { usePos, type Settings } from "@/lib/pos-store";
-import { LogOut, RotateCcw, Save, Printer, Bluetooth, CheckCircle2 } from "lucide-react";
+import { LogOut, RotateCcw, Save, Printer, Bluetooth, CheckCircle2, ShieldAlert, Eye, EyeOff } from "lucide-react";
 import { ConfirmActionModal } from "@/components/ConfirmActionModal";
 import { PermissionGate } from "@/components/PermissionGate";
 import { withActionFeedbackSafe } from "@/lib/action-feedback";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { formatTin } from "./_app.payment";
 import { toast } from "sonner";
+import api from "@/lib/api";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsScreen,
@@ -403,6 +404,11 @@ function SettingsScreen() {
             <p className="mt-2 text-xs">Sidebar items and routes are hidden when the user lacks the required permission.</p>
           </div>
         </Section>
+
+        {/* Security — Void Authorization (Admin only) */}
+        {user?.role === "admin" && (
+          <VoidPinSection settings={settings} saveSettings={saveSettings} />
+        )}
       </div>
 
         <div className="pt-6 border-t border-border flex items-center justify-between safe-bottom">
@@ -478,5 +484,194 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-card shadow transition-all ${checked ? "left-6" : "left-0.5"}`} />
       </button>
     </label>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Void PIN Section (Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+function VoidPinSection({ settings, saveSettings }: { settings: Settings; saveSettings: (s: Settings) => Promise<void> }) {
+  const [adminPassword, setAdminPassword] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [showAdminPw, setShowAdminPw] = useState(false);
+  const [showNewPin, setShowNewPin] = useState(false);
+  const [showConfirmPin, setShowConfirmPin] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const pinEnabled = (settings as any).voidPinEnabled !== false;
+  const hasPinConfigured = (settings as any).voidPinConfigured === true;
+
+  const handleToggleEnabled = async () => {
+    setError(""); setSuccess("");
+    if (!adminPassword.trim()) {
+      setError("Enter your Admin password first to change Void PIN settings.");
+      return;
+    }
+    try {
+      setSaving(true);
+      const { data } = await api.post("/settings/void-pin", {
+        adminPassword,
+        newPin: undefined,
+        enableVoidPin: !pinEnabled,
+      });
+      if (data.success) {
+        await saveSettings({ ...settings, ...(data.settings || {}), voidPinConfigured: hasPinConfigured } as Settings);
+        setSuccess(`Void PIN authorization has been ${!pinEnabled ? "enabled" : "disabled"}.`);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || "Failed to update Void PIN setting.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSavePin = async () => {
+    setError(""); setSuccess("");
+    if (!adminPassword.trim()) { setError("Current Admin password is required."); return; }
+    if (!newPin.trim()) { setError("New Void PIN is required."); return; }
+    if (!/^\d{4,8}$/.test(newPin.trim())) { setError("PIN must be 4–8 numeric digits."); return; }
+    if (newPin !== confirmPin) { setError("New PIN and Confirm PIN do not match."); return; }
+
+    try {
+      setSaving(true);
+      const { data } = await api.post("/settings/void-pin", {
+        adminPassword,
+        newPin,
+        enableVoidPin: true,
+      });
+      if (data.success) {
+        await saveSettings({ ...settings, ...(data.settings || {}), voidPinConfigured: true } as Settings);
+        setSuccess("Void PIN updated and saved successfully.");
+        setNewPin(""); setConfirmPin(""); setAdminPassword("");
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || "Failed to save Void PIN.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Security — Void Authorization">
+      <div className="flex items-center gap-2.5 mb-3">
+        <ShieldAlert className="w-5 h-5 text-destructive shrink-0" />
+        <div>
+          <div className="font-semibold text-sm">Admin Void PIN</div>
+          <div className="text-xs text-muted-foreground">
+            Require an Admin PIN before any POS cart item can be voided. PIN is stored as a secure hash — never in plain text.
+          </div>
+        </div>
+      </div>
+
+      {/* Admin password — required for all changes */}
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-foreground">Current Admin Password *</label>
+        <div className="relative">
+          <input
+            type={showAdminPw ? "text" : "password"}
+            value={adminPassword}
+            onChange={(e) => { setAdminPassword(e.target.value); setError(""); setSuccess(""); }}
+            autoComplete="current-password"
+            placeholder="Required to make any changes"
+            className="w-full px-3 py-2.5 pr-10 rounded-xl border bg-background text-sm focus:ring-2 focus:ring-ring focus:outline-none"
+          />
+          <button type="button" onClick={() => setShowAdminPw(s => !s)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" tabIndex={-1}>
+            {showAdminPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Toggle enable */}
+      <div className="flex items-center justify-between pt-2 pb-1 border-t">
+        <div>
+          <div className="text-sm font-medium">Require PIN for Void</div>
+          <div className="text-xs text-muted-foreground">
+            {pinEnabled ? "PIN authorization is enabled — cashiers must enter Admin PIN to void cart items." : "PIN authorization is disabled — Admin role alone can authorize voids."}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleToggleEnabled}
+          disabled={saving}
+          className={`relative w-12 h-6 rounded-full transition-colors ${pinEnabled ? "bg-accent" : "bg-muted"} disabled:opacity-50`}
+        >
+          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-card shadow transition-all ${pinEnabled ? "left-6" : "left-0.5"}`} />
+        </button>
+      </div>
+
+      {/* New PIN form */}
+      <div className="space-y-3 pt-1 border-t">
+        <div className="text-sm font-semibold">
+          {hasPinConfigured ? "Change Void PIN" : "Set Void PIN"}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">New Void PIN (4–8 digits)</label>
+            <div className="relative">
+              <input
+                type={showNewPin ? "text" : "password"}
+                inputMode="numeric"
+                value={newPin}
+                onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "").slice(0, 8)); setError(""); }}
+                maxLength={8}
+                placeholder="••••"
+                className="w-full px-3 py-2.5 pr-10 rounded-xl border bg-background text-sm font-mono tracking-widest focus:ring-2 focus:ring-ring focus:outline-none"
+              />
+              <button type="button" onClick={() => setShowNewPin(s => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" tabIndex={-1}>
+                {showNewPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Confirm New Void PIN</label>
+            <div className="relative">
+              <input
+                type={showConfirmPin ? "text" : "password"}
+                inputMode="numeric"
+                value={confirmPin}
+                onChange={(e) => { setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 8)); setError(""); }}
+                maxLength={8}
+                placeholder="••••"
+                className="w-full px-3 py-2.5 pr-10 rounded-xl border bg-background text-sm font-mono tracking-widest focus:ring-2 focus:ring-ring focus:outline-none"
+              />
+              <button type="button" onClick={() => setShowConfirmPin(s => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" tabIndex={-1}>
+                {showConfirmPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSavePin}
+          disabled={saving || !adminPassword || !newPin || !confirmPin}
+          className="px-5 py-2.5 rounded-xl bg-destructive text-destructive-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-2"
+        >
+          <ShieldAlert className="w-4 h-4" />
+          {saving ? "Saving…" : hasPinConfigured ? "Update Void PIN" : "Save Void PIN"}
+        </button>
+
+        <p className="text-xs text-muted-foreground">
+          The Void PIN is stored as a secure bcrypt hash. It is never stored in plain text, never returned by the API, and never included in audit logs.
+        </p>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/30 text-xs text-destructive font-medium">
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" /> {success}
+        </div>
+      )}
+    </Section>
   );
 }

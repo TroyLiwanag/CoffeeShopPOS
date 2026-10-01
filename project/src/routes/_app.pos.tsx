@@ -9,9 +9,10 @@ import {
   DEFAULT_CATEGORIES,
   isProductAvailable,
 } from "@/lib/pos-store";
-import { Plus, Minus, Trash2, ShoppingCart, X, Search, Pencil, RotateCcw } from "lucide-react";
+import { Plus, Minus, ShoppingCart, X, Search, Pencil, RotateCcw, CheckCircle2, ShieldAlert } from "lucide-react";
 import { MenuItemVisual } from "@/components/menu/MenuItemVisual";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { VoidItemModal } from "@/components/VoidItemModal";
 import { ProcessingOverlay, type ProcessingState } from "@/components/ProcessingOverlay";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,10 @@ function isQuickAddProduct(p: Product) {
 }
 
 function buildQuickCartItem(product: Product): CartItem {
+  const isRiceMeal = product.category.toLowerCase().includes("rice");
+  const defaultAddons = isRiceMeal ? ["Spoon & Fork (Included)"] : [];
+  const defaultAddonsDetails = isRiceMeal ? [{ name: "Spoon & Fork (Included)", price: 0 }] : [];
+
   return {
     id: crypto.randomUUID(),
     product,
@@ -34,8 +39,8 @@ function buildQuickCartItem(product: Product): CartItem {
     size: "",
     sugar: "",
     milk: "",
-    addons: [],
-    addonsDetails: [],
+    addons: defaultAddons,
+    addonsDetails: defaultAddonsDetails,
     basePrice: product.price,
     notes: "",
     unitPrice: product.price,
@@ -58,11 +63,11 @@ function CartItemMeta({ item }: { item: CartItem }) {
       )}
       {item.addonsDetails && item.addonsDetails.length > 0 ? (
         <div className="space-y-0.5 pt-0.5">
-          <span className="font-semibold text-foreground">Add-ons:</span>
+          <span className="font-semibold text-foreground">Add-ons & Utensils:</span>
           {item.addonsDetails.map((a, idx) => (
             <div key={idx} className="flex justify-between text-muted-foreground pl-2">
               <span>+ {a.name}</span>
-              <span className="font-mono">+{fmt(a.price)}</span>
+              <span className="font-mono">{a.price > 0 ? `+${fmt(a.price)}` : "(Included)"}</span>
             </div>
           ))}
         </div>
@@ -120,8 +125,19 @@ function PosScreen() {
   const [modalProduct, setModalProduct] = useState<Product | null>(null);
   const [editingCartItem, setEditingCartItem] = useState<CartItem | null>(null);
   const [floatingCartOpen, setFloatingCartOpen] = useState(false);
-  const [cartRemoveId, setCartRemoveId] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<CartItem | null>(null);
   const [clearCartModalOpen, setClearCartModalOpen] = useState(false);
+
+  /** Called after successful void authorization */
+  const handleVoidSuccess = (cartItemId: string, qtyVoided: number) => {
+    const existing = cart.find((i) => i.id === cartItemId);
+    if (!existing) return;
+    if (qtyVoided >= existing.qty) {
+      removeFromCart(cartItemId);
+    } else {
+      updateQty(cartItemId, -qtyVoided);
+    }
+  };
 
   const categories = useMemo(() => {
     const fromMenu = [...new Set(menuItems.map((p) => p.category))];
@@ -189,11 +205,11 @@ function PosScreen() {
               </button>
               <button
                 type="button"
-                onClick={() => setCartRemoveId(item.id)}
-                className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg hover:bg-muted touch-manipulation transition-colors"
-                title="Remove item"
+                onClick={() => setVoidTarget(item)}
+                className="px-2 py-1 text-[10px] font-bold rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10 touch-manipulation transition-colors flex items-center gap-1 active:scale-95"
+                title="Void item (requires Admin PIN)"
               >
-                <Trash2 className="w-4 h-4" />
+                <ShieldAlert className="w-3 h-3" /> VOID
               </button>
             </div>
           </div>
@@ -299,18 +315,29 @@ function PosScreen() {
         )}
         {cart.map((item) => (
           <div key={item.id} className="glass-card rounded-xl p-3 border animate-fade-up">
-            <div className="flex justify-between gap-2">
+            <div className="flex justify-between items-start gap-2">
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm truncate">{item.product.name}</div>
+                <div className="font-semibold text-sm truncate">{item.qty}× {item.product.name}</div>
                 <CartItemMeta item={item} />
               </div>
-              <button
-                type="button"
-                onClick={() => setCartRemoveId(item.id)}
-                className="p-2 -m-1 text-muted-foreground hover:text-destructive touch-manipulation"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEditingCartItem(item)}
+                  className="p-1.5 text-muted-foreground hover:text-accent rounded-lg hover:bg-muted touch-manipulation transition-colors"
+                  title="Edit item options & add-ons"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVoidTarget(item)}
+                  className="px-2 py-1 text-[10px] font-bold rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10 touch-manipulation transition-colors flex items-center gap-1 active:scale-95"
+                  title="Void item (requires Admin PIN)"
+                >
+                  <ShieldAlert className="w-3 h-3" /> VOID
+                </button>
+              </div>
             </div>
             <div className="flex items-center justify-between mt-2">
               <div className="flex items-center gap-1">
@@ -517,28 +544,36 @@ function PosScreen() {
           />
         ))}
 
-      {editingCartItem && (
-        <CustomizeModal
-          product={editingCartItem.product}
-          initialItem={editingCartItem}
-          onClose={() => setEditingCartItem(null)}
-          onAdd={(updated) => {
-            updateCartItem(editingCartItem.id, updated);
-            setEditingCartItem(null);
-          }}
+      {editingCartItem &&
+        (isQuickAddProduct(editingCartItem.product) ? (
+          <SimpleAddModal
+            product={editingCartItem.product}
+            initialItem={editingCartItem}
+            onClose={() => setEditingCartItem(null)}
+            onAdd={(updated) => {
+              updateCartItem(editingCartItem.id, updated);
+              setEditingCartItem(null);
+            }}
+          />
+        ) : (
+          <CustomizeModal
+            product={editingCartItem.product}
+            initialItem={editingCartItem}
+            onClose={() => setEditingCartItem(null)}
+            onAdd={(updated) => {
+              updateCartItem(editingCartItem.id, updated);
+              setEditingCartItem(null);
+            }}
+          />
+        ))}
+
+      {voidTarget && (
+        <VoidItemModal
+          item={voidTarget}
+          onClose={() => setVoidTarget(null)}
+          onVoidSuccess={handleVoidSuccess}
         />
       )}
-
-      <ConfirmDeleteModal
-        open={cartRemoveId !== null}
-        title="Remove from cart"
-        detail={cartRemoveId ? cart.find((c) => c.id === cartRemoveId)?.product.name : undefined}
-        confirmLabel="Remove"
-        onClose={() => setCartRemoveId(null)}
-        onConfirm={async () => {
-          if (cartRemoveId) removeFromCart(cartRemoveId);
-        }}
-      />
 
       <ConfirmDeleteModal
         open={clearCartModalOpen}
@@ -566,24 +601,68 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function SimpleAddModal({
   product,
+  initialItem,
   onClose,
   onAdd,
 }: {
   product: Product;
+  initialItem?: CartItem | null;
   onClose: () => void;
   onAdd: (i: CartItem) => void;
 }) {
+  const [qty, setQty] = useState(initialItem?.qty || 1);
+  const [notes, setNotes] = useState(initialItem?.notes || "");
+  const [utensils, setUtensils] = useState<string[]>(
+    initialItem?.addons?.filter((a) => a === "Spoon" || a === "Fork") || []
+  );
   const [adding, setAdding] = useState(false);
   const [overlay, setOverlay] = useState<ProcessingState>("idle");
+
+  const categoryLower = product.category.toLowerCase();
+  const isRiceMeal = categoryLower.includes("rice");
+  const isPastryOrSnack =
+    categoryLower.includes("snack") ||
+    categoryLower.includes("pastry") ||
+    categoryLower.includes("bakery") ||
+    categoryLower.includes("waffle") ||
+    categoryLower.includes("dessert");
+
+  const itemTotal = product.price * qty;
 
   const submit = async () => {
     if (adding) return;
     setAdding(true);
     setOverlay("processing");
-    await new Promise((r) => setTimeout(r, 400));
-    onAdd(buildQuickCartItem(product));
+    await new Promise((r) => setTimeout(r, 300));
+
+    let addons: string[] = [];
+    let addonsDetails: { name: string; price: number }[] = [];
+
+    if (isRiceMeal) {
+      addons = ["Spoon & Fork (Included)"];
+      addonsDetails = [{ name: "Spoon & Fork (Included)", price: 0 }];
+    } else if (isPastryOrSnack) {
+      addons = utensils;
+      addonsDetails = utensils.map((u) => ({ name: u, price: 0 }));
+    }
+
+    onAdd({
+      id: initialItem?.id || crypto.randomUUID(),
+      product,
+      qty,
+      size: "",
+      sugar: "",
+      milk: "",
+      addons,
+      addonsDetails,
+      basePrice: product.price,
+      notes,
+      unitPrice: product.price,
+      itemTotal,
+    });
+
     setOverlay("success");
-    await new Promise((r) => setTimeout(r, 550));
+    await new Promise((r) => setTimeout(r, 400));
     onClose();
     setOverlay("idle");
     setAdding(false);
@@ -595,17 +674,17 @@ function SimpleAddModal({
       onClick={onClose}
     >
       <div
-        className="modal-panel relative w-full sm:max-w-md flex flex-col animate-scale-in"
+        className="modal-panel relative w-full sm:max-w-md max-h-[90vh] flex flex-col animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         <ProcessingOverlay
           state={overlay}
-          processingLabel="Adding to cart…"
-          successLabel="Added to cart!"
+          processingLabel={initialItem ? "Saving changes…" : "Adding to cart…"}
+          successLabel={initialItem ? "Changes saved!" : "Added to cart!"}
         />
-        <div className="glass-bar px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 rounded-t-2xl">
+        <div className="glass-bar px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 rounded-t-2xl shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 shadow-inner">
+            <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-inner">
               {product.image || product.icon ? (
                 <MenuItemVisual
                   image={product.image}
@@ -623,7 +702,9 @@ function SimpleAddModal({
               )}
             </div>
             <div className="min-w-0">
-              <h3 className="font-display text-responsive-lg truncate">{product.name}</h3>
+              <h3 className="font-display text-responsive-lg truncate">
+                {initialItem ? `Edit ${product.name}` : product.name}
+              </h3>
               <div className="text-xs text-muted-foreground capitalize">{product.category}</div>
             </div>
           </div>
@@ -637,30 +718,110 @@ function SimpleAddModal({
           </button>
         </div>
 
-        <div className="p-4 sm:p-6 space-y-4">
-          <div className="text-center py-2">
+        <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
+          <div className="text-center py-1">
             <div className="font-display text-responsive-2xl text-primary">{fmt(product.price)}</div>
             {product.description ? (
-              <p className="text-sm text-muted-foreground mt-2">{product.description}</p>
+              <p className="text-xs text-muted-foreground mt-1">{product.description}</p>
             ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Quantity</div>
+            <div className="flex items-center gap-3 justify-center bg-muted/30 p-2 rounded-xl border">
+              <button
+                type="button"
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                className="w-10 h-10 rounded-lg border bg-background hover:bg-muted flex items-center justify-center font-bold text-lg"
+              >
+                -
+              </button>
+              <span className="font-display text-xl font-bold w-12 text-center">{qty}</span>
+              <button
+                type="button"
+                onClick={() => setQty((q) => q + 1)}
+                className="w-10 h-10 rounded-lg border bg-background hover:bg-muted flex items-center justify-center font-bold text-lg"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          {isRiceMeal && (
+            <div className="space-y-1.5">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Utensils / Cutlery
+              </div>
+              <div className="flex items-center justify-between p-3.5 rounded-xl border bg-emerald-500/10 border-emerald-500/20 text-sm">
+                <div className="flex items-center gap-2.5 font-medium text-foreground">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Spoon & Fork (Included)</span>
+                </div>
+                <span className="text-[11px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-md">
+                  Non-editable
+                </span>
+              </div>
+            </div>
+          )}
+
+          {isPastryOrSnack && (
+            <div className="space-y-1.5">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Utensils (Optional)
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {["Spoon", "Fork"].map((u) => {
+                  const active = utensils.includes(u);
+                  return (
+                    <label
+                      key={u}
+                      className={cn(
+                        "flex items-center gap-2.5 p-3 rounded-xl border cursor-pointer touch-manipulation transition-colors text-sm font-medium",
+                        active ? "bg-accent/10 border-accent text-foreground" : "bg-card hover:bg-muted/80 text-muted-foreground"
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() =>
+                          setUtensils((prev) =>
+                            prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]
+                          )
+                        }
+                        className="w-4 h-4 accent-caramel"
+                      />
+                      <span>{u}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Special Request / Notes</div>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="e.g. well done, no sauce..."
+              className="w-full px-3 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
           </div>
         </div>
 
-        <div className="glass-bar border-t p-4 sm:p-5 flex gap-3 safe-bottom rounded-b-2xl">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-4 min-h-[52px] rounded-lg border hover:bg-muted touch-manipulation"
-          >
-            Cancel
-          </button>
+        <div className="glass-bar border-t p-4 sm:p-5 flex items-center justify-between gap-3 safe-bottom rounded-b-2xl shrink-0">
+          <div>
+            <div className="text-xs text-muted-foreground">Item total ({qty}×)</div>
+            <div className="font-display text-responsive-xl text-primary">{fmt(itemTotal)}</div>
+          </div>
           <button
             type="button"
             onClick={submit}
             disabled={adding}
-            className="btn-primary flex-1 py-4 min-h-[52px]"
+            className="btn-primary flex-1 py-3.5 min-h-[48px]"
           >
-            {adding ? "Processing…" : "Add to cart"}
+            {adding ? "Processing…" : initialItem ? "Save changes" : "Add to cart"}
           </button>
         </div>
       </div>

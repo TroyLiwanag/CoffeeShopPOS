@@ -28,13 +28,13 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, permission: "canViewDashboard" },
-  { to: "/pos", label: "POS", icon: Home, permission: "canViewDashboard" },
+  { to: "/pos", label: "POS", icon: Home, permission: null },
   { to: "/orders", label: "Orders", icon: Receipt, permission: "canManageOrders" },
   { to: "/menu", label: "Product", icon: Coffee, permission: "canManageMenu" },
   { to: "/inventory", label: "Inventory", icon: Package, permission: "canManageInventory" },
   { to: "/promos", label: "Promos", icon: Tag, permission: "canManagePromos" },
   { to: "/reports", label: "Reports", icon: BarChart3, permission: "canManageReports" },
-  { to: "/attendance", label: "Attendance", icon: Clock, permission: "canViewDashboard" },
+  { to: "/attendance", label: "Attendance", icon: Clock, permission: "canManageAttendance" },
   { to: "/payroll", label: "Payroll", icon: Wallet, permission: "canManageSales" },
   { to: "/employees", label: "Employees", icon: Users, permission: "canManageUsers" },
   { to: "/verification-codes", label: "Verification Codes", icon: KeyRound, permission: "manage_verification_codes" },

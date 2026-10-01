@@ -6,5 +6,6 @@ const router = Router();
 
 router.get("/", authenticate, settingsController.getSettings);
 router.put("/", authenticate, requirePermission("canManageSettings"), settingsController.updateSettings);
+router.post("/void-pin", authenticate, requirePermission("canManageSettings"), settingsController.updateVoidPin);
 
 export default router;

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { usePos, fmt, formatOrderNumber, type Order } from "@/lib/pos-store";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { Receipt, Ban, Search, Filter, AlertTriangle, X, CheckCircle2, ShieldAlert } from "lucide-react";
+import { Receipt, RotateCcw, Search, Filter, AlertTriangle, X, CheckCircle2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { withActionFeedback } from "@/lib/action-feedback";
 import { cn } from "@/lib/utils";
@@ -12,9 +12,10 @@ export const Route = createFileRoute("/_app/orders")({
   component: OrdersScreen,
 });
 
-const VOID_REASONS = [
-  "Customer Cancelled Order",
+const REFUND_REASONS = [
+  "Customer Requested Refund",
   "Wrong Items Selected by Cashier",
+  "Defective / Quality Issue",
   "Duplicate Payment Entry",
   "Payment Gateway Failed",
   "Item Out of Stock / Damaged",
@@ -22,20 +23,21 @@ const VOID_REASONS = [
 ];
 
 function OrdersScreen() {
-  const { orders, voidOrder, user } = usePos();
+  const { orders, refundOrder, voidOrder, user } = usePos();
+  const handleRefund = refundOrder || voidOrder;
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "completed" | "voided">("all");
-  const [voidTarget, setVoidTarget] = useState<Order | null>(null);
-  const [selectedReason, setSelectedReason] = useState(VOID_REASONS[0]);
+  const [statusFilter, setStatusFilter] = useState<"all" | "completed" | "refunded">("all");
+  const [refundTarget, setRefundTarget] = useState<Order | null>(null);
+  const [selectedReason, setSelectedReason] = useState(REFUND_REASONS[0]);
   const [customReason, setCustomReason] = useState("");
-  const [voiding, setVoiding] = useState(false);
+  const [refunding, setRefunding] = useState(false);
 
-  const canVoid = user?.role === "admin" || Boolean(user?.permissions?.canManageOrders);
+  const canRefund = user?.role === "admin" || Boolean(user?.permissions?.canManageOrders);
 
   const filteredOrders = orders.filter((o) => {
-    const isVoided = o.orderStatus === "voided" || o.orderStatus === "cancelled";
-    if (statusFilter === "completed" && isVoided) return false;
-    if (statusFilter === "voided" && !isVoided) return false;
+    const isRefunded = o.orderStatus === "refunded" || o.orderStatus === "voided" || o.orderStatus === "cancelled";
+    if (statusFilter === "completed" && isRefunded) return false;
+    if (statusFilter === "refunded" && !isRefunded) return false;
 
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -56,33 +58,33 @@ function OrdersScreen() {
     return true;
   });
 
-  const handleConfirmVoid = async () => {
-    if (!voidTarget) return;
+  const handleConfirmRefund = async () => {
+    if (!refundTarget) return;
     const finalReason = selectedReason === "Other / Manager Request"
       ? (customReason.trim() || "Other / Manager Request")
       : selectedReason;
 
     if (!finalReason) {
-      toast.error("Please enter or select a valid reason for voiding this order.");
+      toast.error("Please enter or select a valid reason for refunding this order.");
       return;
     }
 
-    setVoiding(true);
+    setRefunding(true);
     try {
       await withActionFeedback(
-        () => voidOrder(voidTarget.id, finalReason),
+        () => handleRefund(refundTarget.id, finalReason),
         {
-          loading: "Voiding order...",
-          success: `Order #${formatOrderNumber(voidTarget.number, voidTarget.createdAt)} voided!`,
-          error: "Failed to void order.",
+          loading: "Refunding order...",
+          success: `Order #${formatOrderNumber(refundTarget.number, refundTarget.createdAt)} refunded!`,
+          error: "Failed to refund order.",
         },
       );
-      setVoidTarget(null);
+      setRefundTarget(null);
       setCustomReason("");
     } catch {
       /* toast shown */
     } finally {
-      setVoiding(false);
+      setRefunding(false);
     }
   };
 
@@ -94,7 +96,7 @@ function OrdersScreen() {
           <div>
             <h1 className="font-display text-responsive-3xl">Orders History</h1>
             <p className="text-sm text-muted-foreground">
-              {orders.length} total orders recorded · Voided orders are excluded from sales totals
+              {orders.length} total orders recorded · Refunded orders are excluded from sales totals
             </p>
           </div>
         </div>
@@ -122,10 +124,10 @@ function OrdersScreen() {
             >
               <option value="all">All Orders ({orders.length})</option>
               <option value="completed">
-                Completed ({orders.filter((o) => o.orderStatus !== "voided" && o.orderStatus !== "cancelled").length})
+                Completed ({orders.filter((o) => o.orderStatus !== "refunded" && o.orderStatus !== "voided" && o.orderStatus !== "cancelled").length})
               </option>
-              <option value="voided">
-                Voided / Cancelled ({orders.filter((o) => o.orderStatus === "voided" || o.orderStatus === "cancelled").length})
+              <option value="refunded">
+                Refunded / Cancelled ({orders.filter((o) => o.orderStatus === "refunded" || o.orderStatus === "voided" || o.orderStatus === "cancelled").length})
               </option>
             </select>
           </div>
@@ -141,7 +143,7 @@ function OrdersScreen() {
       ) : (
         <div className="space-y-3">
           {filteredOrders.map((o) => {
-            const isVoided = o.orderStatus === "voided" || o.orderStatus === "cancelled";
+            const isRefunded = o.orderStatus === "refunded" || o.orderStatus === "voided" || o.orderStatus === "cancelled";
             const orNo = formatOrderNumber(o.number, o.createdAt);
 
             return (
@@ -149,7 +151,7 @@ function OrdersScreen() {
                 key={o.id}
                 className={cn(
                   "bg-card rounded-2xl border p-4 sm:p-5 transition-all shadow-xs space-y-3",
-                  isVoided ? "border-destructive/30 bg-destructive/5" : "hover:border-accent/40",
+                  isRefunded ? "border-destructive/30 bg-destructive/5" : "hover:border-accent/40",
                 )}
               >
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b pb-3">
@@ -162,9 +164,9 @@ function OrdersScreen() {
                       >
                         Order #{orNo}
                       </Link>
-                      {isVoided ? (
+                      {isRefunded ? (
                         <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-destructive text-destructive-foreground flex items-center gap-1">
-                          <Ban className="w-3 h-3" /> VOIDED
+                          <RotateCcw className="w-3 h-3" /> {o.orderStatus === "voided" ? "VOIDED" : "REFUNDED"}
                         </span>
                       ) : (
                         <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
@@ -179,20 +181,20 @@ function OrdersScreen() {
                   </div>
 
                   <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2">
-                    <div className={cn("font-display text-xl font-bold", isVoided ? "line-through text-muted-foreground" : "text-primary")}>
+                    <div className={cn("font-display text-xl font-bold", isRefunded ? "line-through text-muted-foreground" : "text-primary")}>
                       {fmt(o.total)}
                     </div>
-                    {!isVoided && canVoid && (
+                    {!isRefunded && canRefund && (
                       <button
                         type="button"
                         onClick={() => {
-                          setVoidTarget(o);
-                          setSelectedReason(VOID_REASONS[0]);
+                          setRefundTarget(o);
+                          setSelectedReason(REFUND_REASONS[0]);
                           setCustomReason("");
                         }}
                         className="px-3 py-1.5 rounded-lg border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 transition-colors flex items-center gap-1.5 active:scale-95"
                       >
-                        <Ban className="w-3.5 h-3.5" /> Void Order
+                        <RotateCcw className="w-3.5 h-3.5" /> Refund Order
                       </button>
                     )}
                   </div>
@@ -208,12 +210,12 @@ function OrdersScreen() {
                   ))}
                 </div>
 
-                {/* Void details footer if voided */}
-                {isVoided && (
+                {/* Refund details footer if refunded/voided */}
+                {isRefunded && (
                   <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-start gap-2">
                     <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
                     <div>
-                      <strong>Void Details:</strong> Voided by <span className="font-semibold">{o.voidedByName || o.voidedBy || "Authorized User"}</span>
+                      <strong>Refund Details:</strong> Refunded by <span className="font-semibold">{o.voidedByName || o.voidedBy || "Authorized User"}</span>
                       {o.voidedAt ? ` on ${new Date(o.voidedAt).toLocaleString()}` : ""}
                       {o.voidReason ? <p className="mt-0.5 text-destructive/90">Reason: &quot;{o.voidReason}&quot;</p> : null}
                     </div>
@@ -225,11 +227,11 @@ function OrdersScreen() {
         </div>
       )}
 
-      {/* REVISION 4 & REVISION 7 — Void Confirmation Modal */}
-      {voidTarget && typeof window !== "undefined" && createPortal(
+      {/* Refund Confirmation Modal */}
+      {refundTarget && typeof window !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[9999] flex items-center justify-center p-4 modal-backdrop animate-fade-in"
-          onClick={() => !voiding && setVoidTarget(null)}
+          onClick={() => !refunding && setRefundTarget(null)}
           role="dialog"
           aria-modal="true"
         >
@@ -240,11 +242,11 @@ function OrdersScreen() {
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2.5 text-destructive">
                 <AlertTriangle className="w-6 h-6 shrink-0" />
-                <h2 className="font-display text-xl">Void Transaction</h2>
+                <h2 className="font-display text-xl">Refund Transaction</h2>
               </div>
               <button
                 type="button"
-                onClick={() => setVoidTarget(null)}
+                onClick={() => setRefundTarget(null)}
                 className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -254,26 +256,26 @@ function OrdersScreen() {
             <div className="space-y-3">
               <div className="p-3.5 rounded-xl bg-destructive/10 border border-destructive/30 text-xs text-destructive space-y-1">
                 <p className="font-bold text-sm">
-                  Are you sure you want to void this transaction?
+                  Are you sure you want to refund this transaction?
                 </p>
                 <p className="text-foreground font-mono font-medium">
-                  Order #<strong>{formatOrderNumber(voidTarget.number, voidTarget.createdAt)}</strong> — ₱{voidTarget.total.toFixed(2)}
+                  Order #<strong>{formatOrderNumber(refundTarget.number, refundTarget.createdAt)}</strong> — ₱{refundTarget.total.toFixed(2)}
                 </p>
                 <p className="text-[11px] opacity-90">
-                  This transaction will be marked as VOIDED, excluded from sales reports, and logged in audit trails.
+                  This transaction will be marked as REFUNDED, excluded from sales reports, and logged in audit trails.
                 </p>
               </div>
 
               <div className="space-y-2">
                 <label className="text-xs font-bold text-foreground">
-                  Reason for Void *
+                  Reason for Refund *
                 </label>
                 <select
                   value={selectedReason}
                   onChange={(e) => setSelectedReason(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border bg-background text-sm font-medium focus:ring-2 focus:ring-ring focus:outline-none"
                 >
-                  {VOID_REASONS.map((r) => (
+                  {REFUND_REASONS.map((r) => (
                     <option key={r} value={r}>
                       {r}
                     </option>
@@ -285,7 +287,7 @@ function OrdersScreen() {
                     value={customReason}
                     onChange={(e) => setCustomReason(e.target.value)}
                     rows={2}
-                    placeholder="Enter specific reason for voiding this order..."
+                    placeholder="Enter specific reason for refunding this order..."
                     className="w-full p-3 rounded-xl border bg-background text-xs focus:ring-2 focus:ring-ring focus:outline-none"
                   />
                 )}
@@ -295,18 +297,18 @@ function OrdersScreen() {
             <div className="flex gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setVoidTarget(null)}
+                onClick={() => setRefundTarget(null)}
                 className="flex-1 py-3 rounded-xl border bg-card hover:bg-muted text-sm font-medium touch-manipulation active:scale-95 transition-transform"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleConfirmVoid}
-                disabled={voiding}
+                onClick={handleConfirmRefund}
+                disabled={refunding}
                 className="flex-1 py-3 rounded-xl bg-destructive text-destructive-foreground text-sm font-bold hover:opacity-90 active:scale-95 transition-all shadow-sm disabled:opacity-50"
               >
-                {voiding ? "Voiding…" : "Confirm Void"}
+                {refunding ? "Refunding…" : "Confirm Refund"}
               </button>
             </div>
           </div>
@@ -316,3 +318,4 @@ function OrdersScreen() {
     </PageContainer>
   );
 }
+

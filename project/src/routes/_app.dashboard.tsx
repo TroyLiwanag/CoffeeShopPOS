@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { SalesTrendChart } from "@/components/reports/SalesTrendChart";
+import { PermissionGate } from "@/components/PermissionGate";
 import api from "@/lib/api";
 
 export const Route = createFileRoute("/_app/dashboard")({
@@ -68,7 +69,7 @@ function DashboardScreen() {
     };
   }, []);
 
-  const validOrders = orders.filter((o) => o.orderStatus !== "voided" && o.orderStatus !== "cancelled");
+  const validOrders = orders.filter((o) => o.orderStatus !== "voided" && o.orderStatus !== "refunded" && o.orderStatus !== "cancelled");
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayOrders = validOrders.filter((o) => (o.createdAt || "").startsWith(todayStr));
   const todaySalesTotal = todayOrders.reduce((sum, o) => sum + o.total, 0);
@@ -84,7 +85,8 @@ function DashboardScreen() {
   }));
 
   return (
-    <PageContainer wide className="pb-10">
+    <PermissionGate path="/dashboard">
+      <PageContainer wide className="pb-10">
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
@@ -322,5 +324,6 @@ function DashboardScreen() {
         </div>
       </div>
     </PageContainer>
+  </PermissionGate>
   );
 }

@@ -24,7 +24,7 @@ export const Route = createFileRoute("/_app/employees")({
 });
 
 const defaultPermissions: Permissions = {
-  canViewDashboard: true,
+  canViewDashboard: false,
   canManageUsers: false,
   canManageProducts: false,
   canManageMenu: false,

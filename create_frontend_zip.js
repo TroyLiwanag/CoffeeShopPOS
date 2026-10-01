@@ -5,8 +5,8 @@ const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 
-const DIST_SRC = path.resolve("d:/wamp64/www/coffeeshop/CoffeeShop/project/dist");
-const OUT_ZIP = path.resolve("d:/wamp64/www/coffeeshop/CoffeeShop/hostinger_frontend.zip");
+const DIST_SRC = path.resolve("d:/wamp64/www/coffeeshop/coffeeshop/project/dist");
+const OUT_ZIP = path.resolve("d:/wamp64/www/coffeeshop/coffeeshop/hostinger_frontend.zip");
 
 if (fs.existsSync(OUT_ZIP)) {
   fs.unlinkSync(OUT_ZIP);
@@ -43,7 +43,7 @@ $zip.Dispose()
 Write-Host "✅ hostinger_frontend.zip created with ${files.length} files"
 `;
 
-const psScriptPath = path.resolve("d:/wamp64/www/coffeeshop/CoffeeShop/build_frontend_zip.ps1");
+const psScriptPath = path.resolve("d:/wamp64/www/coffeeshop/coffeeshop/build_frontend_zip.ps1");
 fs.writeFileSync(psScriptPath, psScript, "utf8");
 try {
   execSync(`powershell -ExecutionPolicy Bypass -File "${psScriptPath}"`, { stdio: "inherit" });
