@@ -14,6 +14,7 @@
 # IDE & OS files
 .idea/
 .vscode/
+.vercel/
 *.swp
 *.DS_Store
 Thumbs.db
@@ -26,3 +27,5 @@ Thumbs.db
 
 # Logs
 *.log
+
+.vercel
