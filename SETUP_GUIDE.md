@@ -74,11 +74,22 @@ Before running the application, ensure the following are installed and running:
 
 ---
 
+## 🌐 Production Deployment (Vercel & TiDB Cloud)
+
+- **Production Frontend & API URL:** [https://cafecorazon.vercel.app](https://cafecorazon.vercel.app)
+- **Production Health Endpoint:** [https://cafecorazon.vercel.app/api/health](https://cafecorazon.vercel.app/api/health)
+- **Database Status:** [https://cafecorazon.vercel.app/api/ping](https://cafecorazon.vercel.app/api/ping) (`{"status":"ok","db":"connected"}`)
+- **Vercel Project:** `troy-jayson-s-projects / cafecorazon`
+- **Database:** TiDB Cloud Serverless (`Cluster0`, Singapore AWS `ap-southeast-1`)
+
+---
+
 ## 🛠️ Summary of Port Configuration & URLs
 
-| Component | Directory | Dev Command | Local URL |
+| Component | Directory | Dev Command | Local / Production URL |
 | :--- | :--- | :--- | :--- |
-| **Backend API** | `api/` | `npm run dev` | `http://localhost:5000/api` |
+| **Production App** | Full-Stack | Vercel Live | `https://cafecorazon.vercel.app` |
+| **Backend API** | `backend/` | `npm run dev` | `http://localhost:5000/api` |
 | **Frontend Web App** | `project/` | `npm run dev` | `http://localhost:5173` |
 
 ---
@@ -89,11 +100,14 @@ Before running the application, ensure the following are installed and running:
   ```env
   VITE_API_URL=http://localhost:5000/api
   ```
-- **Backend (`api/.env`)**:
+- **Backend (`backend/.env`)**:
   ```env
   PORT=5000
-  DB_HOST=127.0.0.1
-  DB_USER=u870554361_admin
-  DB_PASSWORD=CafeCorazon2026!DBPass
-  DB_NAME=u870554361_corazondb
+  DB_HOST=gateway01.ap-southeast-1.prod.aws.tidbcloud.com
+  DB_PORT=4000
+  DB_USER=mE1mQ79jxvi2LmR.root
+  DB_PASSWORD=bLkIogYXov7kI0l1
+  DB_NAME=corazondb
+  DB_SSL=true
+  JWT_SECRET=cafe-corazon-jwt-secret-production
   ```
