@@ -49,7 +49,8 @@ app.use(
         origin.startsWith("http://localhost:") ||
         origin.startsWith("http://127.0.0.1:") ||
         origin.endsWith(".hostingersite.com") ||
-        origin.endsWith(".cafecorazon.shop")
+        origin.endsWith(".cafecorazon.shop") ||
+        origin.endsWith(".vercel.app")
       ) {
         return callback(null, true);
       }
@@ -59,11 +60,15 @@ app.use(
   }),
 );
 app.use(express.json());
-// Ensure uploads directory exists (not included in deployment zip to protect live images)
+// Ensure uploads directory exists (safely catch error in read-only serverless environments)
 const uploadsDir = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log("📁 Created uploads/ directory.");
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log("📁 Created uploads/ directory.");
+  }
+} catch (_err) {
+  // Read-only serverless environment
 }
 app.use("/uploads", express.static(uploadsDir));
 
@@ -89,13 +94,17 @@ app.get(["/api", "/api/"], (_req, res) => {
   });
 });
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", message: "Cafe Corazon API Healthy" });
+const apiRouter = express.Router();
+
+apiRouter.get(["/", "/health"], (_req, res) => {
+  res.json({
+    status: "ok",
+    message: "Cafe Corazon Coffee Shop API is running!",
+    timestamp: new Date().toISOString(),
+  });
 });
 
-app.get("/api/health", (_req, res) => res.json({ status: "ok", message: "Cafe Corazon Coffee Shop API is running!" }));
-
-app.get("/api/ping", async (_req, res) => {
+apiRouter.get("/ping", async (_req, res) => {
   try {
     const start = Date.now();
     await pool.query("SELECT 1");
@@ -105,21 +114,34 @@ app.get("/api/ping", async (_req, res) => {
   }
 });
 
-app.use("/api/auth", authRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api/products", productRoutes);
-app.use("/api/orders", orderRoutes);
-app.use("/api/inventory", inventoryRoutes);
-app.use("/api/reports", reportRoutes);
-app.use("/api/payroll", payrollRoutes);
-app.use("/api/attendance", attendanceRoutes);
-app.use("/api/audit", auditRoutes);
-app.use("/api/settings", settingsRoutes);
-app.use("/api/menu", menuRoutes);
-app.use("/api/promos", promoRoutes);
-app.use("/api/verification-codes", verificationCodeRoutes);
-app.use("/api/payments", paymentRoutes);
-app.use("/api/recipes", recipeRoutes);
+apiRouter.all("/init-db", async (_req, res) => {
+  try {
+    await seedDatabase();
+    res.json({ status: "ok", message: "Database schema and seed completed successfully!" });
+  } catch (err) {
+    console.error("DB Init Error:", err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+apiRouter.use("/auth", authRoutes);
+apiRouter.use("/users", userRoutes);
+apiRouter.use("/products", productRoutes);
+apiRouter.use("/orders", orderRoutes);
+apiRouter.use("/inventory", inventoryRoutes);
+apiRouter.use("/reports", reportRoutes);
+apiRouter.use("/payroll", payrollRoutes);
+apiRouter.use("/attendance", attendanceRoutes);
+apiRouter.use("/audit", auditRoutes);
+apiRouter.use("/settings", settingsRoutes);
+apiRouter.use("/menu", menuRoutes);
+apiRouter.use("/promos", promoRoutes);
+apiRouter.use("/verification-codes", verificationCodeRoutes);
+apiRouter.use("/payments", paymentRoutes);
+apiRouter.use("/recipes", recipeRoutes);
+
+app.use("/api", apiRouter);
+app.use("/", apiRouter);
 
 // Fallback for React SPA routing on non-API routes
 app.use((req, res, next) => {
@@ -144,16 +166,21 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ message: err.message || "Server error" });
 });
 
-// Start Express server immediately
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`API running at http://localhost:${PORT}/api`);
-  console.log("Routes: /api/auth, /api/users, /api/products, /api/menu, /api/orders, /api/inventory, /api/reports, /api/payroll, /api/attendance, /api/audit, /api/settings, /api/verification-codes");
-  
-  // Seed database asynchronously without crashing the server if DB connection fails initially
-  seedDatabase()
-    .then(() => console.log("Database seeded / checked successfully."))
-    .catch((err) => {
-      console.error("Database connection warning during seed:", err.message);
-      console.error("Verify Hostinger DB credentials (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME).");
-    });
-});
+// In serverless environments (like Vercel), app is exported without calling app.listen()
+if (!process.env.VERCEL) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`API running at http://localhost:${PORT}/api`);
+    console.log(
+      "Routes: /api/auth, /api/users, /api/products, /api/menu, /api/orders, /api/inventory, /api/reports, /api/payroll, /api/attendance, /api/audit, /api/settings, /api/verification-codes"
+    );
+
+    // Seed database asynchronously without crashing the server if DB connection fails initially
+    seedDatabase()
+      .then(() => console.log("Database seeded / checked successfully."))
+      .catch((err) => {
+        console.error("Database connection warning during seed:", err.message);
+      });
+  });
+}
+
+export default app;

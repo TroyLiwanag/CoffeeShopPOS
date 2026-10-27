@@ -4,8 +4,13 @@ const getApiBase = () => {
   if (import.meta.env.VITE_API_URL && !import.meta.env.VITE_API_URL.includes("localhost")) {
     return import.meta.env.VITE_API_URL;
   }
-  if (typeof window !== "undefined" && window.location.hostname.includes("cafecorazon.shop")) {
-    return "https://api.cafecorazon.shop/api";
+  if (typeof window !== "undefined") {
+    if (window.location.hostname.includes("cafecorazon.shop")) {
+      return "https://api.cafecorazon.shop/api";
+    }
+    if (window.location.hostname.endsWith(".vercel.app")) {
+      return "/api";
+    }
   }
   return import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 };

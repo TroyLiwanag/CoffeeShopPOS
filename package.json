@@ -1,0 +1,9 @@
+{
+  "name": "cafe-corazon",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "cd project && npm install && npm run build",
+    "start": "node api/src/server.js"
+  }
+}
